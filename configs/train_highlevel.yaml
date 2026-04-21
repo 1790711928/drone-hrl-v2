@@ -1,0 +1,3 @@
+algorithm: ppo
+freeze_lowlevel: true
+action_space: discrete_4_policy_selector

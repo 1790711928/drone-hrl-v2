@@ -19,12 +19,12 @@ class TerminationConfig:
     k_capture: int = 3
     k_escape: int = 5
     max_steps: int = 1000
-    x_min: float = -200.0
-    x_max: float = 200.0
-    y_min: float = -200.0
-    y_max: float = 200.0
+    x_min: float = -50.0
+    x_max: float = 50.0
+    y_min: float = -50.0
+    y_max: float = 50.0
     z_min: float = 0.0
-    z_max: float = 80.0
+    z_max: float = 50.0
 
 
 @dataclass

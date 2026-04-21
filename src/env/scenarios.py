@@ -14,24 +14,34 @@ class ScenarioSpec:
 
 
 SCENARIOS: Dict[str, ScenarioSpec] = {
-    "s1_close_threat": ScenarioSpec(
-        name="s1_close_threat",
-        evader=Agent3DState(x=0.0, y=0.0, z=10.0, speed=10.0, yaw=0.2, pitch=0.0),
-        pursuer=Agent3DState(x=-8.0, y=0.0, z=10.0, speed=11.0, yaw=0.0, pitch=0.0),
+    # 1) 后方近距离威胁
+    "rear_close_threat": ScenarioSpec(
+        name="rear_close_threat",
+        evader=Agent3DState(x=0.0, y=0.0, z=12.0, speed=10.0, yaw=0.2, pitch=0.0),
+        pursuer=Agent3DState(x=-6.0, y=0.0, z=12.0, speed=11.5, yaw=0.0, pitch=0.0),
     ),
-    "s2_energy_management": ScenarioSpec(
-        name="s2_energy_management",
-        evader=Agent3DState(x=0.0, y=0.0, z=12.0, speed=9.0, yaw=0.0, pitch=0.0),
-        pursuer=Agent3DState(x=-20.0, y=-5.0, z=12.0, speed=10.0, yaw=0.1, pitch=0.0),
+    # 2) 侧翼包围（用偏置侧后方高威胁近似）
+    "flank_encirclement": ScenarioSpec(
+        name="flank_encirclement",
+        evader=Agent3DState(x=0.0, y=0.0, z=10.0, speed=9.5, yaw=0.0, pitch=0.0),
+        pursuer=Agent3DState(x=-8.0, y=8.0, z=10.0, speed=11.0, yaw=-0.3, pitch=0.0),
     ),
-    "s3_vertical_escape": ScenarioSpec(
-        name="s3_vertical_escape",
-        evader=Agent3DState(x=0.0, y=0.0, z=8.0, speed=10.0, yaw=0.0, pitch=0.15),
-        pursuer=Agent3DState(x=-15.0, y=2.0, z=5.0, speed=11.0, yaw=0.0, pitch=0.0),
+    # 3) 边界受限
+    "boundary_constrained": ScenarioSpec(
+        name="boundary_constrained",
+        evader=Agent3DState(x=42.0, y=0.0, z=8.0, speed=9.0, yaw=0.8, pitch=0.0),
+        pursuer=Agent3DState(x=30.0, y=-10.0, z=8.0, speed=10.5, yaw=0.5, pitch=0.0),
     ),
-    "s4_boundary_disturbance": ScenarioSpec(
-        name="s4_boundary_disturbance",
-        evader=Agent3DState(x=85.0, y=0.0, z=6.0, speed=9.5, yaw=0.7, pitch=0.0),
-        pursuer=Agent3DState(x=70.0, y=-10.0, z=6.0, speed=10.5, yaw=0.4, pitch=0.0),
+    # 4) 垂直 z 轴威胁
+    "vertical_z_threat": ScenarioSpec(
+        name="vertical_z_threat",
+        evader=Agent3DState(x=0.0, y=0.0, z=6.0, speed=10.0, yaw=0.0, pitch=0.2),
+        pursuer=Agent3DState(x=-12.0, y=1.0, z=2.0, speed=11.2, yaw=0.0, pitch=0.15),
     ),
 }
+
+# backward-compatible aliases
+SCENARIOS["s1_close_threat"] = SCENARIOS["rear_close_threat"]
+SCENARIOS["s2_energy_management"] = SCENARIOS["flank_encirclement"]
+SCENARIOS["s3_vertical_escape"] = SCENARIOS["vertical_z_threat"]
+SCENARIOS["s4_boundary_disturbance"] = SCENARIOS["boundary_constrained"]

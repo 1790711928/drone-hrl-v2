@@ -128,7 +128,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ## 4) 终止条件（重点）
 
-> 当前默认训练空间已放大：x/y 为 `[-200, 200]`，z 为 `[0, 80]`（比之前更大，便于逃逸策略学习）。
+> 当前默认训练空间：x/y 为 `[-50, 50]`，z 为 `[0, 50]`。
 
 
 ### 逃脱判定（必须连续 k 步）
@@ -146,7 +146,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 1. 先通过 `src/main.py` 看懂环境 step 输出。
 2. 在 `src/training/train_lowlevel.py` 接入 SAC（每个场景一个策略）。
-3. 冻结低层后，在 `src/training/train_highlevel.py` 接 PPO 选择器。
+3. 先做 4x4 评估确认每个低层在主场景最优，再冻结低层训练上层 PPO 切换器。
 4. 增加 4x4 评估脚本和鲁棒性扫描脚本。
 
 ---
@@ -162,3 +162,43 @@ python -m pip install -r requirements.txt
 python -m src.main --scenario s1_close_threat --steps 20
 python -m pytest -q
 ```
+
+
+## 6) 接入 SAC 训练（已可用）
+
+### 6.1 单场景低层训练
+```powershell
+python -m src.training.train_lowlevel --scenario rear_close_threat --timesteps 120000 --model-out outputs/checkpoints/sac_low_1_rear_close_threat.zip
+```
+
+可选场景：
+- `rear_close_threat`（后方近距离威胁）
+- `flank_encirclement`（侧翼包围）
+- `boundary_constrained`（边界受限）
+- `vertical_z_threat`（垂直 z 轴威胁）
+
+### 6.2 四个场景分别训练
+```powershell
+python -m src.training.train_lowlevel_all --timesteps 120000
+```
+
+训练日志默认在：`outputs/logs/sac`。
+
+
+
+### 6.3 先做 4x4 低层评估（不同时训练）
+```powershell
+python -m src.evaluation.eval_lowlevel_matrix --episodes 30
+```
+
+判据：每个低层策略 `pi_i` 在自己的主场景 `S_i` 上应当最好（至少不差于其它策略）。
+
+### 6.4 冻结低层后训练上层 PPO 切换器
+```powershell
+python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip
+```
+
+> 目标建议：
+> - 四个低层策略在各自主场景先达到 60~70% 胜率；
+> - 再训练上层切换器，整体目标 90% 左右。
+

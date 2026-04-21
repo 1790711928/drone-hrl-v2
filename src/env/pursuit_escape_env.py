@@ -10,6 +10,7 @@ from src.env.dynamics import (
     rule_based_pursuer_control,
     step_kinematics,
 )
+from src.env.reward import compute_reward
 from src.env.scenarios import SCENARIOS
 from src.env.termination import EpisodeOutcome, TerminationConfig, TerminationState, evaluate_termination
 
@@ -34,9 +35,11 @@ class PursuitEscapeEnv:
         self.term_cfg = term_cfg or TerminationConfig()
         self.state: Env3DState | None = None
         self.tstate: TerminationState = TerminationState()
+        self.current_scenario: str = "rear_close_threat"
 
-    def reset(self, scenario: str = "s1_close_threat") -> Dict[str, float]:
+    def reset(self, scenario: str = "rear_close_threat") -> Dict[str, float]:
         spec = SCENARIOS[scenario]
+        self.current_scenario = scenario
         self.state = Env3DState(evader=spec.evader, pursuer=spec.pursuer, step_count=0)
         self.tstate = TerminationState()
         return self._observation(closing_speed=0.0)
@@ -92,7 +95,22 @@ class PursuitEscapeEnv:
             tstate=self.tstate,
         )
 
-        reward = (cur_distance - prev_distance) - 0.001 * (ev_accel**2 + ev_yaw_rate**2 + ev_pitch_rate**2)
+        reward = compute_reward(
+            scenario=self.current_scenario,
+            prev_distance=prev_distance,
+            cur_distance=cur_distance,
+            action=(ev_accel, ev_yaw_rate, ev_pitch_rate),
+            evader_position=(evader_next.x, evader_next.y, evader_next.z),
+            bounds=(
+                self.term_cfg.x_min,
+                self.term_cfg.x_max,
+                self.term_cfg.y_min,
+                self.term_cfg.y_max,
+                self.term_cfg.z_min,
+                self.term_cfg.z_max,
+            ),
+            outcome=outcome,
+        )
         done = outcome != EpisodeOutcome.RUNNING
         info = {
             "outcome": outcome.value,

@@ -166,6 +166,10 @@ python -m pytest -q
 
 ## 6) 接入 SAC 训练（已可用）
 
+> 默认已关闭 tensorboard 依赖（`--log-dir` 为空）。
+> 如果你传了 `--log-dir` 但没安装 tensorboard，训练脚本会自动关闭该日志并继续训练。
+> 若要启用 tensorboard，可执行：`python -m pip install tensorboard`，并传入 `--log-dir outputs/logs/...`。
+
 ### 6.1 单场景低层训练
 ```powershell
 python -m src.training.train_lowlevel --scenario rear_close_threat --timesteps 120000 --model-out outputs/checkpoints/sac_low_1_rear_close_threat.zip
@@ -201,4 +205,3 @@ python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/ch
 > 目标建议：
 > - 四个低层策略在各自主场景先达到 60~70% 胜率；
 > - 再训练上层切换器，整体目标 90% 左右。
-

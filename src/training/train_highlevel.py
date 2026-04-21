@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 from pathlib import Path
 
 
@@ -14,7 +15,7 @@ def main() -> None:
     parser.add_argument("--low-model-4", default="outputs/checkpoints/sac_low_4_vertical_z_threat.zip")
     parser.add_argument("--timesteps", type=int, default=300_000)
     parser.add_argument("--model-out", default="outputs/checkpoints/ppo_highlevel_switch.zip")
-    parser.add_argument("--log-dir", default="outputs/logs/ppo_high")
+    parser.add_argument("--log-dir", default="", help="optional tensorboard log dir; leave empty to disable")
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
@@ -35,7 +36,15 @@ def main() -> None:
 
     low_models = [SAC.load(p, device=args.device) for p in low_paths]
 
-    Path(args.log_dir).mkdir(parents=True, exist_ok=True)
+    tensorboard_log = None
+    normalized_log_dir = args.log_dir.strip()
+    if normalized_log_dir:
+        if importlib.util.find_spec("tensorboard") is None:
+            print("[highlevel] tensorboard not installed, disabling --log-dir automatically.")
+        else:
+            Path(normalized_log_dir).mkdir(parents=True, exist_ok=True)
+            tensorboard_log = normalized_log_dir
+
     Path(args.model_out).parent.mkdir(parents=True, exist_ok=True)
 
     env = DummyVecEnv([lambda: HighLevelSwitchEnv(low_models=low_models)])
@@ -44,7 +53,7 @@ def main() -> None:
         policy="MlpPolicy",
         env=env,
         verbose=1,
-        tensorboard_log=args.log_dir,
+        tensorboard_log=tensorboard_log,
         device=args.device,
         n_steps=2048,
         batch_size=256,

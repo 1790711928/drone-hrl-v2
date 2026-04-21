@@ -1,0 +1,4 @@
+algorithm: sac
+num_policies: 4
+freeze_highlevel: true
+scenarios: [s1_close_threat, s2_energy_management, s3_vertical_escape, s4_boundary_disturbance]

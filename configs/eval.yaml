@@ -1,0 +1,14 @@
+matrix_eval:
+  scenarios: 4
+  lowlevel_policies: 4
+metrics:
+  - success_rate
+  - time_to_escape
+  - min_distance_margin
+  - mean_distance_growth_rate
+  - control_energy
+  - boundary_violation_rate
+robustness_scan:
+  pursuer_speed_ratio: [1.05, 1.1, 1.15, 1.2]
+  observation_noise_std: [0.0, 0.02, 0.05]
+  action_delay_steps: [0, 1, 2]

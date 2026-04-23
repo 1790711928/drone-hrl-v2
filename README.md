@@ -169,6 +169,7 @@ python -m pytest -q
 > 默认已关闭 tensorboard 依赖（`--log-dir` 为空）。
 > 如果你传了 `--log-dir` 但没安装 tensorboard，训练脚本会自动关闭该日志并继续训练。
 > 若要启用 tensorboard，可执行：`python -m pip install tensorboard`，并传入 `--log-dir outputs/logs/...`。
+> 当前默认难度已上调（更严格逃脱判定、更高追击速度比）以提升策略区分度。
 
 ### 6.1 单策略低层训练（推荐主次场景混合）
 ```powershell

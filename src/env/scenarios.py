@@ -20,7 +20,7 @@ SCENARIOS: Dict[str, ScenarioSpec] = {
         evader=Agent3DState(x=0.0, y=0.0, z=12.0, speed=10.0, yaw=0.2, pitch=0.0),
         pursuer=Agent3DState(x=-6.0, y=0.0, z=12.0, speed=11.5, yaw=0.0, pitch=0.0),
     ),
-    # 2) 侧翼包围（用偏置侧后方高威胁近似）
+    # 2) 侧翼威胁（单追击机侧后方高威胁）
     "flank_threat": ScenarioSpec(
         name="flank_threat",
         evader=Agent3DState(x=0.0, y=0.0, z=10.0, speed=9.5, yaw=0.0, pitch=0.0),
@@ -29,14 +29,14 @@ SCENARIOS: Dict[str, ScenarioSpec] = {
     # 3) 边界受限
     "boundary_constrained": ScenarioSpec(
         name="boundary_constrained",
-        evader=Agent3DState(x=42.0, y=0.0, z=8.0, speed=9.0, yaw=0.8, pitch=0.0),
+        evader=Agent3DState(x=46.0, y=0.0, z=8.0, speed=9.0, yaw=0.8, pitch=0.0),
         pursuer=Agent3DState(x=30.0, y=-10.0, z=8.0, speed=10.5, yaw=0.5, pitch=0.0),
     ),
     # 4) 垂直 z 轴威胁
     "vertical_z_threat": ScenarioSpec(
         name="vertical_z_threat",
-        evader=Agent3DState(x=0.0, y=0.0, z=6.0, speed=10.0, yaw=0.0, pitch=0.2),
-        pursuer=Agent3DState(x=-12.0, y=1.0, z=2.0, speed=11.2, yaw=0.0, pitch=0.15),
+        evader=Agent3DState(x=0.0, y=0.0, z=8.0, speed=10.0, yaw=0.0, pitch=0.28),
+        pursuer=Agent3DState(x=-12.0, y=1.0, z=1.0, speed=11.2, yaw=0.0, pitch=0.08),
     ),
 }
 

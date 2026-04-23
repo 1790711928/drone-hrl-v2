@@ -14,11 +14,11 @@ class EpisodeOutcome(str, Enum):
 
 @dataclass
 class TerminationConfig:
-    d_capture: float = 2.0
-    d_safe: float = 20.0
-    k_capture: int = 3
-    k_escape: int = 5
-    max_steps: int = 1000
+    d_capture: float = 2.5
+    d_safe: float = 26.0
+    k_capture: int = 4
+    k_escape: int = 8
+    max_steps: int = 600
     x_min: float = -50.0
     x_max: float = 50.0
     y_min: float = -50.0

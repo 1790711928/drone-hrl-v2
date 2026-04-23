@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import random
 from typing import Any, Dict, Tuple
 
@@ -19,7 +20,7 @@ from src.env.termination import EpisodeOutcome, TerminationConfig, TerminationSt
 @dataclass
 class EnvConfig:
     dt: float = 0.1
-    pursuer_speed_ratio: float = 1.1
+    pursuer_speed_ratio: float = 1.2
     evader_speed_min: float = 2.0
     evader_speed_max: float = 20.0
     pursuer_speed_min: float = 2.0
@@ -112,7 +113,7 @@ class PursuitEscapeEnv:
         cur_distance = relative_distance(self.state)
         closing_speed = (prev_distance - cur_distance) / self.env_cfg.dt
 
-        los_escape_ok = closing_speed <= 0.0
+        los_escape_ok = self._los_escape_ok()
         outcome = evaluate_termination(
             distance=cur_distance,
             closing_speed=closing_speed,
@@ -148,6 +149,24 @@ class PursuitEscapeEnv:
             "escape_streak": self.tstate.escape_streak,
         }
         return self._observation(closing_speed=closing_speed), reward, done, info
+
+    def _los_escape_ok(self) -> bool:
+        if self.state is None:
+            return False
+        ev = self.state.evader
+        pu = self.state.pursuer
+        dx = ev.x - pu.x
+        dy = ev.y - pu.y
+        dz = ev.z - pu.z
+        norm = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if norm <= 1e-6:
+            return False
+        los_x, los_y, los_z = dx / norm, dy / norm, dz / norm
+        heading_x = math.cos(ev.pitch) * math.cos(ev.yaw)
+        heading_y = math.cos(ev.pitch) * math.sin(ev.yaw)
+        heading_z = math.sin(ev.pitch)
+        los_cos = heading_x * los_x + heading_y * los_y + heading_z * los_z
+        return los_cos > 0.35
 
     def _observation(self, closing_speed: float) -> Dict[str, float]:
         if self.state is None:

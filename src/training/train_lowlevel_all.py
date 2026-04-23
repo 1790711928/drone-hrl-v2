@@ -6,7 +6,7 @@ import sys
 
 SCENARIOS = [
     "rear_close_threat",
-    "flank_encirclement",
+    "flank_threat",
     "boundary_constrained",
     "vertical_z_threat",
 ]
@@ -14,8 +14,9 @@ SCENARIOS = [
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train four low-level SAC policies (one per scenario)")
-    parser.add_argument("--timesteps", type=int, default=120_000)
+    parser.add_argument("--timesteps", type=int, default=40_000)
     parser.add_argument("--log-dir", default="", help="optional tensorboard log dir; leave empty to disable")
+    parser.add_argument("--mix-ratio", type=float, default=0.2, help="non-primary scenario ratio for each policy")
     args = parser.parse_args()
 
     print(f"[lowlevel-all] python executable: {sys.executable}")
@@ -32,6 +33,8 @@ def main() -> None:
             str(args.timesteps),
             "--model-out",
             model_out,
+            "--mix-ratio",
+            str(args.mix_ratio),
         ]
         if args.log_dir:
             cmd += ["--log-dir", f"{args.log_dir}/{scenario}"]

@@ -21,8 +21,8 @@ SCENARIOS: Dict[str, ScenarioSpec] = {
         pursuer=Agent3DState(x=-6.0, y=0.0, z=12.0, speed=11.5, yaw=0.0, pitch=0.0),
     ),
     # 2) 侧翼包围（用偏置侧后方高威胁近似）
-    "flank_encirclement": ScenarioSpec(
-        name="flank_encirclement",
+    "flank_threat": ScenarioSpec(
+        name="flank_threat",
         evader=Agent3DState(x=0.0, y=0.0, z=10.0, speed=9.5, yaw=0.0, pitch=0.0),
         pursuer=Agent3DState(x=-8.0, y=8.0, z=10.0, speed=11.0, yaw=-0.3, pitch=0.0),
     ),
@@ -42,6 +42,7 @@ SCENARIOS: Dict[str, ScenarioSpec] = {
 
 # backward-compatible aliases
 SCENARIOS["s1_close_threat"] = SCENARIOS["rear_close_threat"]
-SCENARIOS["s2_energy_management"] = SCENARIOS["flank_encirclement"]
+SCENARIOS["s2_energy_management"] = SCENARIOS["flank_threat"]
 SCENARIOS["s3_vertical_escape"] = SCENARIOS["vertical_z_threat"]
 SCENARIOS["s4_boundary_disturbance"] = SCENARIOS["boundary_constrained"]
+SCENARIOS["flank_encirclement"] = SCENARIOS["flank_threat"]

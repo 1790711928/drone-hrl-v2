@@ -19,7 +19,7 @@ class HighLevelSwitchEnv(gym.Env[np.ndarray, int]):
         self.switch_penalty = switch_penalty
         self.scenarios = [
             "rear_close_threat",
-            "flank_encirclement",
+            "flank_threat",
             "boundary_constrained",
             "vertical_z_threat",
         ]

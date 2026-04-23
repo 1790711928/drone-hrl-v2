@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 SCENARIOS = [
     "rear_close_threat",
-    "flank_encirclement",
+    "flank_threat",
     "boundary_constrained",
     "vertical_z_threat",
 ]
@@ -44,7 +44,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="4x4 evaluation for low-level SAC policies")
     parser.add_argument("--episodes", type=int, default=30)
     parser.add_argument("--model-1", default="outputs/checkpoints/sac_low_1_rear_close_threat.zip")
-    parser.add_argument("--model-2", default="outputs/checkpoints/sac_low_2_flank_encirclement.zip")
+    parser.add_argument("--model-2", default="outputs/checkpoints/sac_low_2_flank_threat.zip")
     parser.add_argument("--model-3", default="outputs/checkpoints/sac_low_3_boundary_constrained.zip")
     parser.add_argument("--model-4", default="outputs/checkpoints/sac_low_4_vertical_z_threat.zip")
     args = parser.parse_args()
@@ -68,7 +68,7 @@ def main() -> None:
         row = []
         for j, model in enumerate(models, start=1):
             r = evaluate_model_on_scenario(model, scenario, args.episodes)
-            row.append(f"pi{j}:{r.success_rate:.2f}")
+            row.append(f"pi{j}:sr={r.success_rate:.2f},R={r.avg_reward:.1f}")
         print(f"S{i}({scenario}) -> " + " | ".join(row))
 
     print("\nCriterion: each pi_i should be best (or tied-best) on S_i before high-level PPO training.")

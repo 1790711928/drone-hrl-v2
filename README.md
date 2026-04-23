@@ -170,20 +170,22 @@ python -m pytest -q
 > 如果你传了 `--log-dir` 但没安装 tensorboard，训练脚本会自动关闭该日志并继续训练。
 > 若要启用 tensorboard，可执行：`python -m pip install tensorboard`，并传入 `--log-dir outputs/logs/...`。
 
-### 6.1 单场景低层训练
+### 6.1 单策略低层训练（推荐主次场景混合）
 ```powershell
-python -m src.training.train_lowlevel --scenario rear_close_threat --timesteps 120000 --model-out outputs/checkpoints/sac_low_1_rear_close_threat.zip
+python -m src.training.train_lowlevel --scenario rear_close_threat --timesteps 40000 --mix-ratio 0.2 --model-out outputs/checkpoints/sac_low_1_rear_close_threat.zip
 ```
 
 可选场景：
 - `rear_close_threat`（后方近距离威胁）
-- `flank_encirclement`（侧翼包围）
+- `flank_threat`（侧翼威胁）
 - `boundary_constrained`（边界受限）
 - `vertical_z_threat`（垂直 z 轴威胁）
 
+`--mix-ratio` 说明：例如 `0.2` 表示该策略训练时有 80% 采样主场景，20% 采样其他三个次场景（均分）。
+
 ### 6.2 四个场景分别训练
 ```powershell
-python -m src.training.train_lowlevel_all --timesteps 120000
+python -m src.training.train_lowlevel_all --timesteps 40000 --mix-ratio 0.2
 ```
 
 训练日志默认在：`outputs/logs/sac`。
@@ -192,7 +194,7 @@ python -m src.training.train_lowlevel_all --timesteps 120000
 
 ### 6.3 先做 4x4 低层评估（不同时训练）
 ```powershell
-python -m src.evaluation.eval_lowlevel_matrix --episodes 30
+python -m src.evaluation.eval_lowlevel_matrix --episodes 100
 ```
 
 判据：每个低层策略 `pi_i` 在自己的主场景 `S_i` 上应当最好（至少不差于其它策略）。

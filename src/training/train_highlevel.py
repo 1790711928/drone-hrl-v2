@@ -10,7 +10,7 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train high-level PPO switch policy")
     parser.add_argument("--low-model-1", default="outputs/checkpoints/sac_low_1_rear_close_threat.zip")
-    parser.add_argument("--low-model-2", default="outputs/checkpoints/sac_low_2_flank_encirclement.zip")
+    parser.add_argument("--low-model-2", default="outputs/checkpoints/sac_low_2_flank_threat.zip")
     parser.add_argument("--low-model-3", default="outputs/checkpoints/sac_low_3_boundary_constrained.zip")
     parser.add_argument("--low-model-4", default="outputs/checkpoints/sac_low_4_vertical_z_threat.zip")
     parser.add_argument("--timesteps", type=int, default=300_000)

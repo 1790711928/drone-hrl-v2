@@ -15,12 +15,13 @@ class RewardWeights:
 
 REWARD_PROFILES = {
     "rear_close_threat": RewardWeights(w_distance=1.2, w_energy=0.0010, w_survive=0.02, w_boundary_risk=0.01),
-    "flank_encirclement": RewardWeights(w_distance=1.0, w_energy=0.0012, w_survive=0.02, w_boundary_risk=0.01),
+    "flank_threat": RewardWeights(w_distance=1.0, w_energy=0.0012, w_survive=0.02, w_boundary_risk=0.01),
     "boundary_constrained": RewardWeights(w_distance=0.9, w_energy=0.0010, w_survive=0.02, w_boundary_risk=0.05),
     "vertical_z_threat": RewardWeights(w_distance=1.1, w_energy=0.0010, w_survive=0.02, w_boundary_risk=0.02),
     # backward-compatible aliases
     "s1_close_threat": RewardWeights(w_distance=1.2, w_energy=0.0010, w_survive=0.02, w_boundary_risk=0.01),
     "s2_energy_management": RewardWeights(w_distance=1.0, w_energy=0.0012, w_survive=0.02, w_boundary_risk=0.01),
+    "flank_encirclement": RewardWeights(w_distance=1.0, w_energy=0.0012, w_survive=0.02, w_boundary_risk=0.01),
     "s3_vertical_escape": RewardWeights(w_distance=1.1, w_energy=0.0010, w_survive=0.02, w_boundary_risk=0.02),
     "s4_boundary_disturbance": RewardWeights(w_distance=0.9, w_energy=0.0010, w_survive=0.02, w_boundary_risk=0.05),
 }

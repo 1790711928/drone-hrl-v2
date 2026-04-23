@@ -14,9 +14,16 @@ class PursuitEscapeGymEnv(gym.Env[np.ndarray, np.ndarray]):
 
     metadata = {"render_modes": []}
 
-    def __init__(self, scenario: str = "s1_close_threat") -> None:
+    def __init__(
+        self,
+        scenario: str = "s1_close_threat",
+        scenario_weights: dict[str, float] | None = None,
+        randomize_reset: bool = True,
+    ) -> None:
         super().__init__()
         self.scenario = scenario
+        self.scenario_weights = scenario_weights
+        self.randomize_reset = randomize_reset
         self.inner = PursuitEscapeEnv()
 
         # Action: [accel, yaw_rate, pitch_rate] normalized to [-1, 1]
@@ -28,7 +35,13 @@ class PursuitEscapeGymEnv(gym.Env[np.ndarray, np.ndarray]):
         super().reset(seed=seed)
         if options and "scenario" in options:
             self.scenario = str(options["scenario"])
-        obs_dict = self.inner.reset(scenario=self.scenario)
+        chosen_scenario = self.scenario
+        if self.scenario_weights:
+            scenarios = list(self.scenario_weights.keys())
+            probs = np.array(list(self.scenario_weights.values()), dtype=np.float64)
+            probs = probs / probs.sum()
+            chosen_scenario = str(self.np_random.choice(scenarios, p=probs))
+        obs_dict = self.inner.reset(scenario=chosen_scenario, randomize=self.randomize_reset)
         return self._flatten_obs(obs_dict), {}
 
     def step(self, action: np.ndarray):

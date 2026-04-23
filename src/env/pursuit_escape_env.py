@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import random
 from typing import Any, Dict, Tuple
 
 from src.env.dynamics import (
@@ -37,10 +38,37 @@ class PursuitEscapeEnv:
         self.tstate: TerminationState = TerminationState()
         self.current_scenario: str = "rear_close_threat"
 
-    def reset(self, scenario: str = "rear_close_threat") -> Dict[str, float]:
+    def reset(
+        self,
+        scenario: str = "rear_close_threat",
+        randomize: bool = False,
+        rng: random.Random | None = None,
+    ) -> Dict[str, float]:
         spec = SCENARIOS[scenario]
         self.current_scenario = scenario
-        self.state = Env3DState(evader=spec.evader, pursuer=spec.pursuer, step_count=0)
+        if randomize:
+            rnd = rng or random
+            evader = Agent3DState(
+                x=spec.evader.x + rnd.uniform(-3.0, 3.0),
+                y=spec.evader.y + rnd.uniform(-3.0, 3.0),
+                z=spec.evader.z + rnd.uniform(-1.5, 1.5),
+                speed=max(self.env_cfg.evader_speed_min, min(self.env_cfg.evader_speed_max, spec.evader.speed + rnd.uniform(-1.0, 1.0))),
+                yaw=spec.evader.yaw + rnd.uniform(-0.15, 0.15),
+                pitch=spec.evader.pitch + rnd.uniform(-0.08, 0.08),
+            )
+            pursuer = Agent3DState(
+                x=spec.pursuer.x + rnd.uniform(-3.0, 3.0),
+                y=spec.pursuer.y + rnd.uniform(-3.0, 3.0),
+                z=spec.pursuer.z + rnd.uniform(-1.5, 1.5),
+                speed=max(self.env_cfg.pursuer_speed_min, min(self.env_cfg.pursuer_speed_max, spec.pursuer.speed + rnd.uniform(-1.0, 1.0))),
+                yaw=spec.pursuer.yaw + rnd.uniform(-0.15, 0.15),
+                pitch=spec.pursuer.pitch + rnd.uniform(-0.08, 0.08),
+            )
+        else:
+            evader = spec.evader
+            pursuer = spec.pursuer
+
+        self.state = Env3DState(evader=evader, pursuer=pursuer, step_count=0)
         self.tstate = TerminationState()
         return self._observation(closing_speed=0.0)
 

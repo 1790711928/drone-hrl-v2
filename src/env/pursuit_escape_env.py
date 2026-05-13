@@ -196,9 +196,10 @@ class PursuitEscapeEnv:
             -math.sin(ev.pitch) * math.sin(ev.yaw),
             math.cos(ev.pitch),
         )
-        threat_forward = (rel_ex * forward[0] + rel_ey * forward[1] + rel_ez * forward[2]) / distance_scale
-        threat_right = (rel_ex * right[0] + rel_ey * right[1] + rel_ez * right[2]) / distance_scale
-        threat_up = (rel_ex * up[0] + rel_ey * up[1] + rel_ez * up[2]) / distance_scale
+        rel_norm = max(math.sqrt(rel_ex * rel_ex + rel_ey * rel_ey + rel_ez * rel_ez), 1e-6)
+        threat_forward = (rel_ex * forward[0] + rel_ey * forward[1] + rel_ez * forward[2]) / rel_norm
+        threat_right = (rel_ex * right[0] + rel_ey * right[1] + rel_ez * right[2]) / rel_norm
+        threat_up = (rel_ex * up[0] + rel_ey * up[1] + rel_ez * up[2]) / rel_norm
         return {
             "dx": dx / world_xy_span,
             "dy": dy / world_xy_span,

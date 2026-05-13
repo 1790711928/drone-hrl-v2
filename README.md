@@ -132,7 +132,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 几何关系：`los_cos`（逃跑方航向与视线方向夹角余弦）
 - 边界风险（归一化）：`boundary_margin_x, boundary_margin_y, boundary_margin_z, min_boundary_margin`
 - 边界方向（归一化到 [-1, 1]）：`evader_x_norm, evader_y_norm, evader_z_norm`
-- 本机体坐标系威胁方向：`threat_forward, threat_right, threat_up`
+- 本机体坐标系威胁方向：`threat_forward, threat_right, threat_up`（单位方向分量，范围 [-1, 1]）
 - 进度：`normalized_step`（`step_count / max_steps`）
 
 ---

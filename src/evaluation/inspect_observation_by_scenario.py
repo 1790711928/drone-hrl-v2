@@ -10,6 +10,11 @@ SCENARIOS = [
 ]
 
 KEYS = [
+    "dx",
+    "dy",
+    "dz",
+    "evader_pitch",
+    "pursuer_pitch",
     "evader_x_norm",
     "evader_y_norm",
     "evader_z_norm",

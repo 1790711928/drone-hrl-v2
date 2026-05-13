@@ -37,7 +37,7 @@ def run_demo(steps: int, scenario: str, save_plot: bool, plot_path: str) -> None
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="3D drone pursuit-escape MVP demo")
-    parser.add_argument("--scenario", default="s1_close_threat", help="scenario name")
+    parser.add_argument("--scenario", default="rear_close_threat", help="scenario name")
     parser.add_argument("--steps", type=int, default=30, help="max demo steps")
     parser.add_argument("--save-plot", action="store_true", help="save 3D trajectory plot (png)")
     parser.add_argument("--plot-path", default="outputs/trajectory.png", help="output path for trajectory plot")

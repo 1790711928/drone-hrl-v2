@@ -151,8 +151,54 @@ class PursuitEscapeEnv:
         return self._observation(closing_speed=closing_speed), reward, done, info
 
     def _los_escape_ok(self) -> bool:
+        return self._compute_los_cos() > 0.35
+
+    def _observation(self, closing_speed: float) -> Dict[str, float]:
         if self.state is None:
-            return False
+            raise RuntimeError("state is None")
+        ev = self.state.evader
+        pu = self.state.pursuer
+
+        dx = ev.x - pu.x
+        dy = ev.y - pu.y
+        dz = ev.z - pu.z
+        distance = relative_distance(self.state)
+        los_cos = self._compute_los_cos()
+
+        margin_x = min(ev.x - self.term_cfg.x_min, self.term_cfg.x_max - ev.x)
+        margin_y = min(ev.y - self.term_cfg.y_min, self.term_cfg.y_max - ev.y)
+        margin_z = min(ev.z - self.term_cfg.z_min, self.term_cfg.z_max - ev.z)
+        min_boundary_margin = min(margin_x, margin_y, margin_z)
+        normalized_step = self.state.step_count / max(float(self.term_cfg.max_steps), 1.0)
+        return {
+            "evader_x": ev.x,
+            "evader_y": ev.y,
+            "evader_z": ev.z,
+            "pursuer_x": pu.x,
+            "pursuer_y": pu.y,
+            "pursuer_z": pu.z,
+            "dx": dx,
+            "dy": dy,
+            "dz": dz,
+            "distance": distance,
+            "closing_speed": closing_speed,
+            "evader_speed": ev.speed,
+            "evader_yaw": ev.yaw,
+            "evader_pitch": ev.pitch,
+            "pursuer_speed": pu.speed,
+            "pursuer_yaw": pu.yaw,
+            "pursuer_pitch": pu.pitch,
+            "los_cos": los_cos,
+            "boundary_margin_x": margin_x,
+            "boundary_margin_y": margin_y,
+            "boundary_margin_z": margin_z,
+            "min_boundary_margin": min_boundary_margin,
+            "normalized_step": normalized_step,
+        }
+
+    def _compute_los_cos(self) -> float:
+        if self.state is None:
+            return 0.0
         ev = self.state.evader
         pu = self.state.pursuer
         dx = ev.x - pu.x
@@ -160,24 +206,9 @@ class PursuitEscapeEnv:
         dz = ev.z - pu.z
         norm = math.sqrt(dx * dx + dy * dy + dz * dz)
         if norm <= 1e-6:
-            return False
+            return 0.0
         los_x, los_y, los_z = dx / norm, dy / norm, dz / norm
         heading_x = math.cos(ev.pitch) * math.cos(ev.yaw)
         heading_y = math.cos(ev.pitch) * math.sin(ev.yaw)
         heading_z = math.sin(ev.pitch)
-        los_cos = heading_x * los_x + heading_y * los_y + heading_z * los_z
-        return los_cos > 0.35
-
-    def _observation(self, closing_speed: float) -> Dict[str, float]:
-        if self.state is None:
-            raise RuntimeError("state is None")
-        return {
-            "evader_x": self.state.evader.x,
-            "evader_y": self.state.evader.y,
-            "evader_z": self.state.evader.z,
-            "pursuer_x": self.state.pursuer.x,
-            "pursuer_y": self.state.pursuer.y,
-            "pursuer_z": self.state.pursuer.z,
-            "distance": relative_distance(self.state),
-            "closing_speed": closing_speed,
-        }
+        return heading_x * los_x + heading_y * los_y + heading_z * los_z

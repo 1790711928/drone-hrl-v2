@@ -15,7 +15,7 @@
 
 如果你要看轨迹图，用：
 ```powershell
-python -m src.main --scenario s1_close_threat --steps 20 --save-plot --plot-path outputs/trajectory.png
+python -m src.main --scenario rear_close_threat --steps 20 --save-plot --plot-path outputs/trajectory.png
 ```
 
 如果提示 `[plot] skipped: matplotlib is required...`，执行：`python -m pip install -r requirements.txt`。
@@ -88,7 +88,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 方式 B（手动）：
 ```powershell
 & .\.venv\Scripts\Activate.ps1
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 ```
 
 ### 2.4 跑测试
@@ -105,7 +105,7 @@ python -m venv .venv
 & .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 python -m pytest -q
 ```
 
@@ -123,6 +123,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `closing_speed`：闭合速度（<=0 通常表示正在拉开）
 - `outcome`：running / escaped / captured / out_of_bounds / timeout
 - `escape_streak`：连续满足逃脱条件步数（防瞬时逃脱胜率虚高）
+
+低层 SAC / 高层 PPO 共用 observation（23 维）字段如下：
+- 位置：`evader_x, evader_y, evader_z, pursuer_x, pursuer_y, pursuer_z`
+- 相对量：`dx, dy, dz, distance, closing_speed`
+- 运动学：`evader_speed, evader_yaw, evader_pitch, pursuer_speed, pursuer_yaw, pursuer_pitch`
+- 几何关系：`los_cos`（逃跑方航向与视线方向夹角余弦）
+- 边界风险：`boundary_margin_x, boundary_margin_y, boundary_margin_z, min_boundary_margin`
+- 进度：`normalized_step`（`step_count / max_steps`）
 
 ---
 
@@ -159,7 +167,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 python -m pytest -q
 ```
 

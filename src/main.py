@@ -11,14 +11,18 @@ def run_demo(steps: int, scenario: str, save_plot: bool, plot_path: str) -> None
     obs = env.reset(scenario=scenario)
     print(f"[reset] scenario={scenario} distance={obs['distance']:.2f}")
 
-    evader_points = [(obs["evader_x"], obs["evader_y"], obs["evader_z"])]
-    pursuer_points = [(obs["pursuer_x"], obs["pursuer_y"], obs["pursuer_z"])]
+    if env.state is None:
+        raise RuntimeError("env state is None after reset")
+    evader_points = [(env.state.evader.x, env.state.evader.y, env.state.evader.z)]
+    pursuer_points = [(env.state.pursuer.x, env.state.pursuer.y, env.state.pursuer.z)]
 
     for i in range(steps):
         # 当前是“规则演示”，不是训练：逃跑方动作固定，追击方规则引导。
         obs, reward, done, info = env.step((0.2, 0.05, 0.01))
-        evader_points.append((obs["evader_x"], obs["evader_y"], obs["evader_z"]))
-        pursuer_points.append((obs["pursuer_x"], obs["pursuer_y"], obs["pursuer_z"]))
+        if env.state is None:
+            raise RuntimeError("env state is None during rollout")
+        evader_points.append((env.state.evader.x, env.state.evader.y, env.state.evader.z))
+        pursuer_points.append((env.state.pursuer.x, env.state.pursuer.y, env.state.pursuer.z))
 
         print(
             f"[step {i+1:03d}] distance={info['distance']:.2f} closing={info['closing_speed']:.2f} "

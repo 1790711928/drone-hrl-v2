@@ -170,29 +170,31 @@ class PursuitEscapeEnv:
         margin_z = min(ev.z - self.term_cfg.z_min, self.term_cfg.z_max - ev.z)
         min_boundary_margin = min(margin_x, margin_y, margin_z)
         normalized_step = self.state.step_count / max(float(self.term_cfg.max_steps), 1.0)
+        world_xy_span = max(self.term_cfg.x_max - self.term_cfg.x_min, 1.0)
+        world_z_span = max(self.term_cfg.z_max - self.term_cfg.z_min, 1.0)
+        distance_scale = math.sqrt(world_xy_span * world_xy_span * 2.0 + world_z_span * world_z_span)
+        speed_scale = max(self.env_cfg.evader_speed_max, self.env_cfg.pursuer_speed_max, 1.0)
+        closing_speed_scale = max(speed_scale, 1.0)
+        pitch_limit = math.pi / 2.0
         return {
-            "evader_x": ev.x,
-            "evader_y": ev.y,
-            "evader_z": ev.z,
-            "pursuer_x": pu.x,
-            "pursuer_y": pu.y,
-            "pursuer_z": pu.z,
-            "dx": dx,
-            "dy": dy,
-            "dz": dz,
-            "distance": distance,
-            "closing_speed": closing_speed,
-            "evader_speed": ev.speed,
-            "evader_yaw": ev.yaw,
-            "evader_pitch": ev.pitch,
-            "pursuer_speed": pu.speed,
-            "pursuer_yaw": pu.yaw,
-            "pursuer_pitch": pu.pitch,
+            "dx": dx / world_xy_span,
+            "dy": dy / world_xy_span,
+            "dz": dz / world_z_span,
+            "distance": distance / distance_scale,
+            "closing_speed": closing_speed / closing_speed_scale,
+            "evader_speed": ev.speed / speed_scale,
+            "pursuer_speed": pu.speed / speed_scale,
+            "evader_yaw_sin": math.sin(ev.yaw),
+            "evader_yaw_cos": math.cos(ev.yaw),
+            "pursuer_yaw_sin": math.sin(pu.yaw),
+            "pursuer_yaw_cos": math.cos(pu.yaw),
+            "evader_pitch": max(-1.0, min(1.0, ev.pitch / pitch_limit)),
+            "pursuer_pitch": max(-1.0, min(1.0, pu.pitch / pitch_limit)),
             "los_cos": los_cos,
-            "boundary_margin_x": margin_x,
-            "boundary_margin_y": margin_y,
-            "boundary_margin_z": margin_z,
-            "min_boundary_margin": min_boundary_margin,
+            "boundary_margin_x": margin_x / (world_xy_span * 0.5),
+            "boundary_margin_y": margin_y / (world_xy_span * 0.5),
+            "boundary_margin_z": margin_z / world_z_span,
+            "min_boundary_margin": min_boundary_margin / max(world_xy_span * 0.5, world_z_span),
             "normalized_step": normalized_step,
         }
 

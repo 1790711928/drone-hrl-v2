@@ -16,7 +16,7 @@ class PursuitEscapeGymEnv(gym.Env[np.ndarray, np.ndarray]):
 
     def __init__(
         self,
-        scenario: str = "s1_close_threat",
+        scenario: str = "rear_close_threat",
         scenario_weights: dict[str, float] | None = None,
         randomize_reset: bool = True,
     ) -> None:

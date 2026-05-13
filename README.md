@@ -15,7 +15,7 @@
 
 如果你要看轨迹图，用：
 ```powershell
-python -m src.main --scenario s1_close_threat --steps 20 --save-plot --plot-path outputs/trajectory.png
+python -m src.main --scenario rear_close_threat --steps 20 --save-plot --plot-path outputs/trajectory.png
 ```
 
 如果提示 `[plot] skipped: matplotlib is required...`，执行：`python -m pip install -r requirements.txt`。
@@ -88,7 +88,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 方式 B（手动）：
 ```powershell
 & .\.venv\Scripts\Activate.ps1
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 ```
 
 ### 2.4 跑测试
@@ -105,7 +105,7 @@ python -m venv .venv
 & .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 python -m pytest -q
 ```
 
@@ -159,7 +159,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 python -m pytest -q
 ```
 

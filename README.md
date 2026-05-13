@@ -124,6 +124,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `outcome`：running / escaped / captured / out_of_bounds / timeout
 - `escape_streak`：连续满足逃脱条件步数（防瞬时逃脱胜率虚高）
 
+低层 SAC / 高层 PPO 共用 observation（23 维）字段如下：
+- 位置：`evader_x, evader_y, evader_z, pursuer_x, pursuer_y, pursuer_z`
+- 相对量：`dx, dy, dz, distance, closing_speed`
+- 运动学：`evader_speed, evader_yaw, evader_pitch, pursuer_speed, pursuer_yaw, pursuer_pitch`
+- 几何关系：`los_cos`（逃跑方航向与视线方向夹角余弦）
+- 边界风险：`boundary_margin_x, boundary_margin_y, boundary_margin_z, min_boundary_margin`
+- 进度：`normalized_step`（`step_count / max_steps`）
+
 ---
 
 ## 4) 终止条件（重点）

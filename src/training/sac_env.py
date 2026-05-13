@@ -13,6 +13,31 @@ class PursuitEscapeGymEnv(gym.Env[np.ndarray, np.ndarray]):
     """Gymnasium adapter for low-level SAC training."""
 
     metadata = {"render_modes": []}
+    OBS_KEYS = [
+        "evader_x",
+        "evader_y",
+        "evader_z",
+        "pursuer_x",
+        "pursuer_y",
+        "pursuer_z",
+        "dx",
+        "dy",
+        "dz",
+        "distance",
+        "closing_speed",
+        "evader_speed",
+        "evader_yaw",
+        "evader_pitch",
+        "pursuer_speed",
+        "pursuer_yaw",
+        "pursuer_pitch",
+        "los_cos",
+        "boundary_margin_x",
+        "boundary_margin_y",
+        "boundary_margin_z",
+        "min_boundary_margin",
+        "normalized_step",
+    ]
 
     def __init__(
         self,
@@ -28,8 +53,10 @@ class PursuitEscapeGymEnv(gym.Env[np.ndarray, np.ndarray]):
 
         # Action: [accel, yaw_rate, pitch_rate] normalized to [-1, 1]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
-        # Obs: evader xyz + pursuer xyz + distance + closing_speed
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(8,), dtype=np.float32)
+        # Obs: shared low/high-level feature schema (see OBS_KEYS)
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(len(self.OBS_KEYS),), dtype=np.float32
+        )
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
@@ -58,16 +85,4 @@ class PursuitEscapeGymEnv(gym.Env[np.ndarray, np.ndarray]):
 
     @staticmethod
     def _flatten_obs(obs_dict: dict[str, float]) -> np.ndarray:
-        return np.array(
-            [
-                obs_dict["evader_x"],
-                obs_dict["evader_y"],
-                obs_dict["evader_z"],
-                obs_dict["pursuer_x"],
-                obs_dict["pursuer_y"],
-                obs_dict["pursuer_z"],
-                obs_dict["distance"],
-                obs_dict["closing_speed"],
-            ],
-            dtype=np.float32,
-        )
+        return np.array([obs_dict[k] for k in PursuitEscapeGymEnv.OBS_KEYS], dtype=np.float32)

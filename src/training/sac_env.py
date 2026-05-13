@@ -33,6 +33,12 @@ class PursuitEscapeGymEnv(gym.Env[np.ndarray, np.ndarray]):
         "boundary_margin_z",
         "min_boundary_margin",
         "normalized_step",
+        "evader_x_norm",
+        "evader_y_norm",
+        "evader_z_norm",
+        "threat_forward",
+        "threat_right",
+        "threat_up",
     ]
 
     def __init__(

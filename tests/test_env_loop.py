@@ -24,6 +24,12 @@ def test_env_reset_and_step_returns_expected_fields() -> None:
         "boundary_margin_z",
         "min_boundary_margin",
         "normalized_step",
+        "evader_x_norm",
+        "evader_y_norm",
+        "evader_z_norm",
+        "threat_forward",
+        "threat_right",
+        "threat_up",
     }
     assert set(obs.keys()) == expected_keys
 

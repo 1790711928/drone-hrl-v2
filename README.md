@@ -124,13 +124,15 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `outcome`：running / escaped / captured / out_of_bounds / timeout
 - `escape_streak`：连续满足逃脱条件步数（防瞬时逃脱胜率虚高）
 
-低层 SAC / 高层 PPO 共用 observation（17 维）字段如下（轻量增强版）：
+低层 SAC / 高层 PPO 共用 observation（21 维）字段如下（threat-geometry 增强版）：
 - 相对位移（归一化）：`dx, dy, dz`
 - 距离与速度（归一化）：`distance, closing_speed, evader_speed, pursuer_speed`
 - 航向角编码：`evader_yaw_sin, evader_yaw_cos, pursuer_yaw_sin, pursuer_yaw_cos`
 - 俯仰角（归一化到 [-1, 1]）：`evader_pitch, pursuer_pitch`
 - 几何关系：`los_cos`（逃跑方航向与视线方向夹角余弦）
 - 边界风险（归一化）：`boundary_margin_x, boundary_margin_y, boundary_margin_z, min_boundary_margin`
+- 边界方向（归一化到 [-1, 1]）：`evader_x_norm, evader_y_norm, evader_z_norm`
+- 本机体坐标系威胁方向：`threat_forward, threat_right, threat_up`
 - 进度：`normalized_step`（`step_count / max_steps`）
 
 ---

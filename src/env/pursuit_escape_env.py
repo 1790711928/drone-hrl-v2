@@ -176,6 +176,29 @@ class PursuitEscapeEnv:
         speed_scale = max(self.env_cfg.evader_speed_max, self.env_cfg.pursuer_speed_max, 1.0)
         closing_speed_scale = max(speed_scale, 1.0)
         pitch_limit = math.pi / 2.0
+        # Position-in-bounds direction signal: [-1, 1], keeps side information of boundary proximity.
+        evader_x_norm = 2.0 * (ev.x - self.term_cfg.x_min) / world_xy_span - 1.0
+        evader_y_norm = 2.0 * (ev.y - self.term_cfg.y_min) / world_xy_span - 1.0
+        evader_z_norm = 2.0 * (ev.z - self.term_cfg.z_min) / world_z_span - 1.0
+
+        # Threat direction in evader-local frame.
+        rel_ex = pu.x - ev.x
+        rel_ey = pu.y - ev.y
+        rel_ez = pu.z - ev.z
+        forward = (
+            math.cos(ev.pitch) * math.cos(ev.yaw),
+            math.cos(ev.pitch) * math.sin(ev.yaw),
+            math.sin(ev.pitch),
+        )
+        right = (-math.sin(ev.yaw), math.cos(ev.yaw), 0.0)
+        up = (
+            -math.sin(ev.pitch) * math.cos(ev.yaw),
+            -math.sin(ev.pitch) * math.sin(ev.yaw),
+            math.cos(ev.pitch),
+        )
+        threat_forward = (rel_ex * forward[0] + rel_ey * forward[1] + rel_ez * forward[2]) / distance_scale
+        threat_right = (rel_ex * right[0] + rel_ey * right[1] + rel_ez * right[2]) / distance_scale
+        threat_up = (rel_ex * up[0] + rel_ey * up[1] + rel_ez * up[2]) / distance_scale
         return {
             "dx": dx / world_xy_span,
             "dy": dy / world_xy_span,
@@ -196,6 +219,12 @@ class PursuitEscapeEnv:
             "boundary_margin_z": margin_z / world_z_span,
             "min_boundary_margin": min_boundary_margin / max(world_xy_span * 0.5, world_z_span),
             "normalized_step": normalized_step,
+            "evader_x_norm": evader_x_norm,
+            "evader_y_norm": evader_y_norm,
+            "evader_z_norm": evader_z_norm,
+            "threat_forward": threat_forward,
+            "threat_right": threat_right,
+            "threat_up": threat_up,
         }
 
     def _compute_los_cos(self) -> float:

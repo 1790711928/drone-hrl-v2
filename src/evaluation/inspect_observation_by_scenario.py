@@ -35,6 +35,7 @@ def main() -> None:
     env = PursuitEscapeEnv()
     print("=== Observation Sanity Check by Scenario ===")
     print("fields:", ", ".join(KEYS))
+    print("note: vertical_z_threat should show relatively stronger |threat_up| than other scenarios.")
 
     for scenario in SCENARIOS:
         obs = env.reset(scenario=scenario, randomize=False)

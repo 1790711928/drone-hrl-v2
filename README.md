@@ -15,7 +15,7 @@
 
 如果你要看轨迹图，用：
 ```powershell
-python -m src.main --scenario s1_close_threat --steps 20 --save-plot --plot-path outputs/trajectory.png
+python -m src.main --scenario rear_close_threat --steps 20 --save-plot --plot-path outputs/trajectory.png
 ```
 
 如果提示 `[plot] skipped: matplotlib is required...`，执行：`python -m pip install -r requirements.txt`。
@@ -88,7 +88,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 方式 B（手动）：
 ```powershell
 & .\.venv\Scripts\Activate.ps1
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 ```
 
 ### 2.4 跑测试
@@ -105,7 +105,7 @@ python -m venv .venv
 & .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 python -m pytest -q
 ```
 
@@ -123,6 +123,17 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `closing_speed`：闭合速度（<=0 通常表示正在拉开）
 - `outcome`：running / escaped / captured / out_of_bounds / timeout
 - `escape_streak`：连续满足逃脱条件步数（防瞬时逃脱胜率虚高）
+
+低层 SAC / 高层 PPO 共用 observation（21 维）字段如下（threat-geometry 增强版）：
+- 相对位移（归一化）：`dx, dy, dz`
+- 距离与速度（归一化）：`distance, closing_speed, evader_speed, pursuer_speed`
+- 航向角编码：`evader_yaw_sin, evader_yaw_cos, pursuer_yaw_sin, pursuer_yaw_cos`
+- 俯仰角（归一化到 [-1, 1]）：`evader_pitch, pursuer_pitch`
+- 几何关系：`los_cos`（逃跑方航向与视线方向夹角余弦）
+- 边界风险（归一化）：`boundary_margin_x, boundary_margin_y, boundary_margin_z, min_boundary_margin`
+- 边界方向（归一化到 [-1, 1]）：`evader_x_norm, evader_y_norm, evader_z_norm`
+- 本机体坐标系威胁方向：`threat_forward, threat_right, threat_up`（单位方向分量，范围 [-1, 1]）
+- 进度：`normalized_step`（`step_count / max_steps`）
 
 ---
 
@@ -159,7 +170,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-python -m src.main --scenario s1_close_threat --steps 20
+python -m src.main --scenario rear_close_threat --steps 20
 python -m pytest -q
 ```
 
@@ -181,6 +192,12 @@ python -m src.training.train_lowlevel --scenario rear_close_threat --timesteps 4
 - `flank_threat`（侧翼威胁）
 - `boundary_constrained`（边界受限）
 - `vertical_z_threat`（垂直 z 轴威胁）
+  - 设计意图：追击者初始具有明显垂直相对威胁（不仅是后向压迫），用于训练垂直机动策略；
+  - reward 在该场景增加轻量垂直分离激励，并对接近 z 边界做额外惩罚，避免“无脑爬升/俯冲”越界。
+
+全场景共享 reward 安全约束：
+- 使用 shared soft boundary safety penalty（基于归一化边界余量），在接近边界前就开始惩罚，并在危险区间快速增大；
+- 各场景仍通过 `w_boundary_risk` 控制惩罚强度（`boundary_constrained` 仍最高），用于保持边界控制难度分层。
 
 `--mix-ratio` 说明：例如 `0.2` 表示该策略训练时有 80% 采样主场景，20% 采样其他三个次场景（均分）。
 

@@ -195,6 +195,10 @@ python -m src.training.train_lowlevel --scenario rear_close_threat --timesteps 4
   - 设计意图：追击者初始具有明显垂直相对威胁（不仅是后向压迫），用于训练垂直机动策略；
   - reward 在该场景增加轻量垂直分离激励，并对接近 z 边界做额外惩罚，避免“无脑爬升/俯冲”越界。
 
+全场景共享 reward 安全约束：
+- 使用 shared soft boundary safety penalty（基于归一化边界余量），在接近边界前就开始惩罚，并在危险区间快速增大；
+- 各场景仍通过 `w_boundary_risk` 控制惩罚强度（`boundary_constrained` 仍最高），用于保持边界控制难度分层。
+
 `--mix-ratio` 说明：例如 `0.2` 表示该策略训练时有 80% 采样主场景，20% 采样其他三个次场景（均分）。
 
 ### 6.2 四个场景分别训练

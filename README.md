@@ -192,6 +192,8 @@ python -m src.training.train_lowlevel --scenario rear_close_threat --timesteps 4
 - `flank_threat`（侧翼威胁）
 - `boundary_constrained`（边界受限）
 - `vertical_z_threat`（垂直 z 轴威胁）
+  - 设计意图：追击者初始具有明显垂直相对威胁（不仅是后向压迫），用于训练垂直机动策略；
+  - reward 在该场景增加轻量垂直分离激励，并对接近 z 边界做额外惩罚，避免“无脑爬升/俯冲”越界。
 
 `--mix-ratio` 说明：例如 `0.2` 表示该策略训练时有 80% 采样主场景，20% 采样其他三个次场景（均分）。
 

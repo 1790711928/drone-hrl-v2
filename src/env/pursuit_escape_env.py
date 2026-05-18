@@ -130,6 +130,7 @@ class PursuitEscapeEnv:
             cur_distance=cur_distance,
             action=(ev_accel, ev_yaw_rate, ev_pitch_rate),
             evader_position=(evader_next.x, evader_next.y, evader_next.z),
+            pursuer_position=(pursuer_next.x, pursuer_next.y, pursuer_next.z),
             bounds=(
                 self.term_cfg.x_min,
                 self.term_cfg.x_max,

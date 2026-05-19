@@ -54,6 +54,7 @@ def compute_reward_terms(
     pursuer_position: tuple[float, float, float],
     bounds: tuple[float, float, float, float, float, float],
     outcome: EpisodeOutcome,
+    prev_evader_position: tuple[float, float, float] | None = None,
 ) -> dict[str, float]:
     w = REWARD_PROFILES.get(scenario, REWARD_PROFILES["rear_close_threat"])
     ev_accel, ev_yaw_rate, ev_pitch_rate = action
@@ -77,6 +78,65 @@ def compute_reward_terms(
         edge_over = max(0.0, 0.30 - z_margin_norm)
         scenario_term += -0.25 * (edge_over**2)
 
+
+    if scenario == "boundary_constrained":
+        px, py, pz_prev = prev_evader_position if prev_evader_position is not None else (x, y, z)
+        x_span = max(x_max - x_min, 1e-6)
+        y_span = max(y_max - y_min, 1e-6)
+        z_span = max(z_max - z_min, 1e-6)
+
+        def norm_margin(ex: float, ey: float, ez: float) -> float:
+            mx = min(ex - x_min, x_max - ex) / (0.5 * x_span)
+            my = min(ey - y_min, y_max - ey) / (0.5 * y_span)
+            mz = min(ez - z_min, z_max - ez) / z_span
+            return max(0.0, min(1.0, min(mx, my, mz)))
+
+        prev_m = norm_margin(px, py, pz_prev)
+        cur_m = norm_margin(x, y, z)
+        margin_progress = cur_m - prev_m
+
+        danger_zone = 1.0 if cur_m < 0.15 else 0.0
+        controllable_bonus = 1.0 if cur_m >= 0.25 else 0.0
+
+        prev_mx = min(px - x_min, x_max - px)
+        prev_my = min(py - y_min, y_max - py)
+        prev_mz = min(pz_prev - z_min, z_max - pz_prev)
+        cur_mx = min(x - x_min, x_max - x)
+        cur_my = min(y - y_min, y_max - y)
+        cur_mz = min(z - z_min, z_max - z)
+
+        prev_axis = min([(prev_mx, "x"), (prev_my, "y"), (prev_mz, "z")], key=lambda t: t[0])[1]
+        cur_axis_delta = 0.0
+        if prev_axis == "x":
+            cur_axis_delta = cur_mx - prev_mx
+        elif prev_axis == "y":
+            cur_axis_delta = cur_my - prev_my
+        else:
+            cur_axis_delta = cur_mz - prev_mz
+        outward_penalty = max(0.0, -cur_axis_delta)
+
+        z_margin_norm = max(0.0, min(1.0, cur_mz / max(0.5 * z_span, 1e-6)))
+        z_low_penalty = max(0.0, 0.25 - z_margin_norm)
+        pitch_rate_penalty = abs(ev_pitch_rate)
+
+        scenario_term += 0.18 * max(0.0, margin_progress)
+        scenario_term += 0.03 * controllable_bonus
+        scenario_term += -0.03 * danger_zone
+        scenario_term += -0.08 * outward_penalty
+        scenario_term += -0.06 * (z_low_penalty**2)
+        scenario_term += -0.004 * pitch_rate_penalty
+
+        subterms = {
+            "bc_margin_progress": 0.18 * max(0.0, margin_progress),
+            "bc_controllable_bonus": 0.03 * controllable_bonus,
+            "bc_danger_penalty": -0.03 * danger_zone,
+            "bc_outward_penalty": -0.08 * outward_penalty,
+            "bc_z_low_penalty": -0.06 * (z_low_penalty**2),
+            "bc_pitch_rate_penalty": -0.004 * pitch_rate_penalty,
+        }
+    else:
+        subterms = {}
+
     terminal_bonus = 0.0
     if outcome == EpisodeOutcome.ESCAPED:
         terminal_bonus = 50.0
@@ -85,7 +145,7 @@ def compute_reward_terms(
     elif outcome == EpisodeOutcome.OUT_OF_BOUNDS:
         terminal_bonus = -20.0
     total_reward = distance_term + energy_term + survive_term + boundary_term + scenario_term + terminal_bonus
-    return {
+    terms = {
         "distance_term": float(distance_term),
         "energy_term": float(energy_term),
         "survive_term": float(survive_term),
@@ -94,6 +154,8 @@ def compute_reward_terms(
         "terminal_bonus": float(terminal_bonus),
         "total_reward": float(total_reward),
     }
+    terms.update({k: float(v) for k, v in subterms.items()})
+    return terms
 
 
 def compute_reward(
@@ -106,6 +168,7 @@ def compute_reward(
     pursuer_position: tuple[float, float, float],
     bounds: tuple[float, float, float, float, float, float],
     outcome: EpisodeOutcome,
+    prev_evader_position: tuple[float, float, float] | None = None,
 ) -> float:
     terms = compute_reward_terms(
         scenario=scenario,
@@ -116,5 +179,6 @@ def compute_reward(
         pursuer_position=pursuer_position,
         bounds=bounds,
         outcome=outcome,
+        prev_evader_position=prev_evader_position,
     )
     return float(terms["total_reward"])

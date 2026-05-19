@@ -249,7 +249,9 @@ python -m src.evaluation.eval_policy_behavior --scenario rear_close_threat --mod
 python -m src.evaluation.eval_boundary_skill_diagnostics --episodes 30 --skill-horizon 80
 ```
 
-该脚本专门诊断 `pi3` 在 `boundary_constrained` 下的边界恢复失败机制（越界轴向、是否回到 safe region、动作是否过保守/过激进等）。
+该脚本专门诊断 `pi3` 在 `boundary_constrained` 下的边界恢复失败机制（越界轴向、danger->controllable->safe 恢复分层、动作是否过保守/过激进等）。
+
+`pi3` 的目标是把无人机从边界危险区带回可控机动区并交还高层 selector，不要求单策略完成完整 episode 逃生。
 
 注意：它用于 **boundary recovery option** 诊断，不替代 full-episode evaluation。
 

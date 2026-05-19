@@ -44,10 +44,18 @@ def main() -> None:
             ),
             outcome=EpisodeOutcome(info["outcome"]),
         )
-        print(
+        line = (
             f"{scenario:>22} -> distance={terms['distance_term']:.4f}, boundary={terms['boundary_term']:.4f}, "
             f"scenario={terms['scenario_term']:.4f}, total={terms['total_reward']:.4f}"
         )
+        if scenario == "boundary_constrained":
+            line += (
+                f", bc_margin_progress={terms.get('bc_margin_progress', 0.0):.4f}"
+                f", bc_danger={terms.get('bc_danger_penalty', 0.0):.4f}"
+                f", bc_controllable={terms.get('bc_controllable_bonus', 0.0):.4f}"
+                f", bc_z_low={terms.get('bc_z_low_penalty', 0.0):.4f}"
+            )
+        print(line)
 
 
 if __name__ == "__main__":

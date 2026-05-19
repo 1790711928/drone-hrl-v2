@@ -80,6 +80,8 @@ class PursuitEscapeEnv:
         prev_distance = relative_distance(self.state)
         ev_accel, ev_yaw_rate, ev_pitch_rate = evader_action
 
+        prev_evader_position = (self.state.evader.x, self.state.evader.y, self.state.evader.z)
+
         evader_next = step_kinematics(
             self.state.evader,
             ev_accel,
@@ -140,6 +142,7 @@ class PursuitEscapeEnv:
                 self.term_cfg.z_max,
             ),
             outcome=outcome,
+            prev_evader_position=prev_evader_position,
         )
         done = outcome != EpisodeOutcome.RUNNING
         info = {

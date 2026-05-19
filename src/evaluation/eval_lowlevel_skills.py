@@ -22,8 +22,9 @@ FLANK_THREAT_REDUCTION_MIN = 0.15
 FLANK_SAFE_THREAT_RIGHT_ABS = 0.35
 FLANK_DISTANCE_WORSE_LIMIT = -0.05
 
-BOUNDARY_SAFE_MARGIN = 0.45
-BOUNDARY_DANGER_MARGIN = 0.20
+BOUNDARY_DANGER_MARGIN = 0.15
+BOUNDARY_CONTROLLABLE_MARGIN = 0.25
+BOUNDARY_SAFE_MARGIN = 0.35
 BOUNDARY_MARGIN_IMPROVE_STRONG = 0.12
 BOUNDARY_MARGIN_IMPROVE_MIN = 0.08
 BOUNDARY_DISTANCE_WORSE_LIMIT = -0.10
@@ -88,10 +89,12 @@ def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> d
             )
         elif policy == "pi3":
             strong_return = margin_now >= BOUNDARY_SAFE_MARGIN
-            recovered_not_danger = (margin_now - start_margin) >= BOUNDARY_MARGIN_IMPROVE_STRONG and margin_now > BOUNDARY_DANGER_MARGIN
-            mild_recovered = (margin_now - start_margin) >= BOUNDARY_MARGIN_IMPROVE_MIN and margin_now > (BOUNDARY_DANGER_MARGIN + 0.08)
+            reach_controllable = margin_now >= BOUNDARY_CONTROLLABLE_MARGIN
+            leave_danger = margin_now >= BOUNDARY_DANGER_MARGIN
+            recovered_not_danger = (margin_now - start_margin) >= BOUNDARY_MARGIN_IMPROVE_STRONG and leave_danger
+            mild_recovered = (margin_now - start_margin) >= BOUNDARY_MARGIN_IMPROVE_MIN and reach_controllable
             skill_completed = (
-                (strong_return or recovered_not_danger or mild_recovered)
+                (strong_return or mild_recovered or (recovered_not_danger and reach_controllable))
                 and dist_gain_now >= BOUNDARY_DISTANCE_WORSE_LIMIT
                 and outcome != "out_of_bounds"
             )

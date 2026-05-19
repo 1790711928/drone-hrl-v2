@@ -20,7 +20,7 @@ def main() -> None:
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
-    parser.add_argument("--scenario-set", choices=["mixed"], default="mixed")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite"], default="composite")
     args = parser.parse_args()
 
     try:
@@ -31,7 +31,7 @@ def main() -> None:
             "stable-baselines3 is required. Install with: pip install stable-baselines3 gymnasium"
         ) from exc
 
-    from src.training.highlevel_env import HighLevelOptionEnv, MIXED_SCENARIOS
+    from src.training.highlevel_env import HighLevelOptionEnv
 
     low_paths = [args.low_model_1, args.low_model_2, args.low_model_3, args.low_model_4]
     for p in low_paths:
@@ -50,19 +50,13 @@ def main() -> None:
             tensorboard_log = normalized_log_dir
 
     Path(args.model_out).parent.mkdir(parents=True, exist_ok=True)
-    mixed_keys = list(MIXED_SCENARIOS.keys()) if args.scenario_set == "mixed" else list(MIXED_SCENARIOS.keys())
-
-    env = DummyVecEnv(
-        [
-            lambda: HighLevelOptionEnv(
-                low_models=low_models,
-                option_duration=args.option_duration,
-                switch_penalty=args.switch_penalty,
-                max_highlevel_steps=args.max_highlevel_steps,
-                mixed_scenarios=mixed_keys,
-            )
-        ]
-    )
+    env = DummyVecEnv([lambda: HighLevelOptionEnv(
+        low_models=low_models,
+        option_duration=args.option_duration,
+        switch_penalty=args.switch_penalty,
+        max_highlevel_steps=args.max_highlevel_steps,
+        scenario_set=args.scenario_set,
+    )])
 
     model = PPO(
         policy="MlpPolicy",

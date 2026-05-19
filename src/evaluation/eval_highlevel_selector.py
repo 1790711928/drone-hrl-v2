@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import random
 from pathlib import Path
 
-from src.training.highlevel_env import HighLevelOptionEnv, MIXED_SCENARIOS
+from src.training.highlevel_env import HighLevelOptionEnv
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate fixed low-level policy or high-level selector on mixed threats")
+    parser = argparse.ArgumentParser(description="Evaluate fixed/random/high-level selector on scenario sets")
     parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--mode", choices=["fixed", "highlevel"], default="fixed")
+    parser.add_argument("--mode", choices=["fixed", "random", "highlevel"], default="fixed")
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
-    parser.add_argument("--scenario-set", choices=["mixed"], default="mixed")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite"], default="composite")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
@@ -43,7 +44,7 @@ def main() -> None:
         option_duration=args.option_duration,
         switch_penalty=args.switch_penalty,
         max_highlevel_steps=args.max_highlevel_steps,
-        mixed_scenarios=list(MIXED_SCENARIOS.keys()),
+        scenario_set=args.scenario_set,
     )
 
     high_model = None
@@ -58,11 +59,13 @@ def main() -> None:
     succ = cap = oob = 0
     total_reward = total_steps = total_switch = 0.0
     option_usage = [0, 0, 0, 0]
-    scenario_outcomes: dict[str, dict[str, int]] = {k: {"escaped": 0, "captured": 0, "out_of_bounds": 0, "timeout": 0} for k in MIXED_SCENARIOS.keys()}
+    scenario_outcomes: dict[str, dict[str, int]] = {}
 
     for _ in range(args.episodes):
-        obs, info = env.reset()
-        mixed = str(info.get("mixed_scenario", "mixed_rear_vertical"))
+        obs, info = env.reset(options={"scenario_set": args.scenario_set})
+        scen = str(info.get("scenario_name", "unknown"))
+        scenario_outcomes.setdefault(scen, {"escaped": 0, "captured": 0, "out_of_bounds": 0, "timeout": 0})
+
         done = False
         ep_reward = 0.0
         ep_steps = 0
@@ -71,6 +74,8 @@ def main() -> None:
         while not done:
             if args.mode == "fixed":
                 action = int(max(0, min(3, args.fixed_policy)))
+            elif args.mode == "random":
+                action = random.randint(0, 3)
             else:
                 assert high_model is not None
                 action, _ = high_model.predict(obs, deterministic=True)
@@ -87,10 +92,13 @@ def main() -> None:
         total_steps += ep_steps
         total_switch += float(info.get("switch_count", 0))
 
-        if outcome == "escaped": succ += 1
-        elif outcome == "captured": cap += 1
-        elif outcome == "out_of_bounds": oob += 1
-        scenario_outcomes[mixed][outcome] = scenario_outcomes[mixed].get(outcome, 0) + 1
+        if outcome == "escaped":
+            succ += 1
+        elif outcome == "captured":
+            cap += 1
+        elif outcome == "out_of_bounds":
+            oob += 1
+        scenario_outcomes[scen][outcome] = scenario_outcomes[scen].get(outcome, 0) + 1
 
     n = max(args.episodes, 1)
     usage_total = max(sum(option_usage), 1)
@@ -105,7 +113,7 @@ def main() -> None:
     print(f"avg_steps={total_steps / n:.3f}")
     print(f"avg_switch_count={total_switch / n:.3f}")
     print(f"option_usage_rate={usage_rate}")
-    print(f"outcome_by_mixed_scenario={scenario_outcomes}")
+    print(f"outcome_by_scenario={scenario_outcomes}")
 
 
 if __name__ == "__main__":

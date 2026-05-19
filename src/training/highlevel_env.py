@@ -6,29 +6,22 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from src.env.dynamics import Agent3DState, Env3DState
+from src.env.termination import TerminationState
 from src.training.sac_env import PursuitEscapeGymEnv
 
+BASIC_SCENARIOS = [
+    "rear_close_threat",
+    "flank_threat",
+    "boundary_constrained",
+    "vertical_z_threat",
+]
+
 MIXED_SCENARIOS: dict[str, dict[str, float]] = {
-    "mixed_rear_vertical": {
-        "rear_close_threat": 0.55,
-        "vertical_z_threat": 0.35,
-        "boundary_constrained": 0.10,
-    },
-    "mixed_flank_boundary": {
-        "flank_threat": 0.55,
-        "boundary_constrained": 0.35,
-        "rear_close_threat": 0.10,
-    },
-    "mixed_rear_boundary": {
-        "rear_close_threat": 0.50,
-        "boundary_constrained": 0.40,
-        "vertical_z_threat": 0.10,
-    },
-    "mixed_vertical_boundary": {
-        "vertical_z_threat": 0.50,
-        "boundary_constrained": 0.40,
-        "flank_threat": 0.10,
-    },
+    "mixed_rear_vertical": {"rear_close_threat": 0.55, "vertical_z_threat": 0.35, "boundary_constrained": 0.10},
+    "mixed_flank_boundary": {"flank_threat": 0.55, "boundary_constrained": 0.35, "rear_close_threat": 0.10},
+    "mixed_rear_boundary": {"rear_close_threat": 0.50, "boundary_constrained": 0.40, "vertical_z_threat": 0.10},
+    "mixed_vertical_boundary": {"vertical_z_threat": 0.50, "boundary_constrained": 0.40, "flank_threat": 0.10},
     "mixed_rear_flank_boundary": {
         "rear_close_threat": 0.35,
         "flank_threat": 0.30,
@@ -37,10 +30,31 @@ MIXED_SCENARIOS: dict[str, dict[str, float]] = {
     },
 }
 
+COMPOSITE_SCENARIOS: dict[str, tuple[Agent3DState, Agent3DState]] = {
+    "composite_rear_vertical": (
+        Agent3DState(x=0.0, y=0.0, z=16.0, speed=10.0, yaw=0.0, pitch=0.10),
+        Agent3DState(x=-4.0, y=0.5, z=5.5, speed=11.5, yaw=0.05, pitch=0.15),
+    ),
+    "composite_flank_boundary": (
+        Agent3DState(x=44.0, y=1.0, z=9.0, speed=9.5, yaw=0.35, pitch=0.0),
+        Agent3DState(x=34.0, y=10.0, z=9.0, speed=11.0, yaw=0.15, pitch=0.0),
+    ),
+    "composite_rear_boundary": (
+        Agent3DState(x=45.0, y=-1.0, z=10.5, speed=9.8, yaw=0.55, pitch=0.0),
+        Agent3DState(x=37.0, y=-1.5, z=10.5, speed=11.3, yaw=0.35, pitch=0.0),
+    ),
+    "composite_vertical_boundary": (
+        Agent3DState(x=43.0, y=0.0, z=6.0, speed=9.7, yaw=0.25, pitch=0.08),
+        Agent3DState(x=38.0, y=0.5, z=1.8, speed=11.0, yaw=0.20, pitch=0.12),
+    ),
+    "composite_rear_flank_boundary": (
+        Agent3DState(x=44.5, y=0.0, z=8.5, speed=9.6, yaw=0.45, pitch=0.0),
+        Agent3DState(x=37.0, y=5.8, z=8.2, speed=11.2, yaw=0.20, pitch=0.0),
+    ),
+}
+
 
 class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
-    """High-level option env: one action triggers one low-level option rollout."""
-
     metadata = {"render_modes": []}
 
     def __init__(
@@ -49,50 +63,77 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         option_duration: int = 8,
         switch_penalty: float = 0.02,
         max_highlevel_steps: int = 80,
-        mixed_scenarios: list[str] | None = None,
+        scenario_set: str = "mixed",
     ) -> None:
         super().__init__()
         self.low_models = low_models
         self.option_duration = option_duration
         self.switch_penalty = switch_penalty
         self.max_highlevel_steps = max_highlevel_steps
-        self.mixed_scenarios = mixed_scenarios or list(MIXED_SCENARIOS.keys())
+        self.scenario_set = scenario_set
 
         self.inner = PursuitEscapeGymEnv(scenario="rear_close_threat")
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.inner.observation_space
 
-        self.prev_option = 0
+        self.prev_option: int | None = None
         self.highlevel_step_count = 0
         self.switch_count = 0
-        self.current_mixed_scenario = self.mixed_scenarios[0]
+        self.current_scenario_name = "rear_close_threat"
 
-    def _choose_lowlevel_scenario(self) -> str:
-        mix = MIXED_SCENARIOS[self.current_mixed_scenario]
+    def _sample_basic(self) -> str:
+        return str(self.np_random.choice(BASIC_SCENARIOS))
+
+    def _sample_mixed(self) -> tuple[str, str]:
+        mixed_name = str(self.np_random.choice(list(MIXED_SCENARIOS.keys())))
+        mix = MIXED_SCENARIOS[mixed_name]
         scenarios = list(mix.keys())
         probs = np.array(list(mix.values()), dtype=np.float64)
         probs = probs / probs.sum()
-        return str(self.np_random.choice(scenarios, p=probs))
+        base = str(self.np_random.choice(scenarios, p=probs))
+        return mixed_name, base
+
+    def _sample_composite(self) -> str:
+        return str(self.np_random.choice(list(COMPOSITE_SCENARIOS.keys())))
+
+    def _reset_composite_state(self, scenario_name: str):
+        ev, pu = COMPOSITE_SCENARIOS[scenario_name]
+        self.inner.inner.state = Env3DState(evader=ev, pursuer=pu, step_count=0)
+        self.inner.inner.tstate = TerminationState()
+        self.inner.inner.current_scenario = "boundary_constrained"
+        obs_dict = self.inner.inner._observation(closing_speed=0.0)
+        return self.inner._flatten_obs(obs_dict)
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
-        if options and "mixed_scenario" in options:
-            self.current_mixed_scenario = str(options["mixed_scenario"])
-        else:
-            self.current_mixed_scenario = str(self.np_random.choice(self.mixed_scenarios))
-
-        scenario = self._choose_lowlevel_scenario()
-        obs, info = self.inner.reset(seed=seed, options={"scenario": scenario})
-        self.prev_option = 0
+        self.prev_option = None
         self.highlevel_step_count = 0
         self.switch_count = 0
-        info.update({"mixed_scenario": self.current_mixed_scenario, "base_scenario": scenario})
-        return obs, info
+
+        if options and "scenario_set" in options:
+            self.scenario_set = str(options["scenario_set"])
+
+        if self.scenario_set == "basic":
+            base = self._sample_basic()
+            obs, info = self.inner.reset(seed=seed, options={"scenario": base})
+            self.current_scenario_name = base
+            info.update({"scenario_name": base, "scenario_set": "basic"})
+            return obs, info
+
+        if self.scenario_set == "mixed":
+            mixed_name, base = self._sample_mixed()
+            obs, info = self.inner.reset(seed=seed, options={"scenario": base})
+            self.current_scenario_name = mixed_name
+            info.update({"scenario_name": mixed_name, "base_scenario": base, "scenario_set": "mixed"})
+            return obs, info
+
+        comp = self._sample_composite()
+        obs = self._reset_composite_state(comp)
+        self.current_scenario_name = comp
+        return obs, {"scenario_name": comp, "scenario_set": "composite"}
 
     def step(self, action: int):
         idx = int(np.clip(action, 0, 3))
-        if idx != self.prev_option:
-            self.switch_count += 1
 
         total_reward = 0.0
         duration_used = 0
@@ -109,7 +150,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             if terminated or truncated:
                 break
 
-        if idx != self.prev_option:
+        if self.prev_option is not None and idx != self.prev_option:
+            self.switch_count += 1
             total_reward -= self.switch_penalty
         self.prev_option = idx
 
@@ -125,11 +167,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 "selected_option": idx,
                 "option_duration_used": duration_used,
                 "switch_count": self.switch_count,
-                "mixed_scenario": self.current_mixed_scenario,
+                "scenario_name": self.current_scenario_name,
+                "scenario_set": self.scenario_set,
             }
         )
         return obs, float(total_reward), bool(terminated), bool(truncated), info
 
 
-# backward compatibility
 HighLevelSwitchEnv = HighLevelOptionEnv

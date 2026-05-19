@@ -257,8 +257,9 @@ python -m src.evaluation.eval_boundary_skill_diagnostics --episodes 30 --skill-h
 
 ### 6.7 High-level mixed threat selector 评估
 ```powershell
-python -m src.evaluation.inspect_highlevel_mixed_scenarios
-python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 0 --episodes 20 --scenario-set mixed
+python -m src.evaluation.inspect_highlevel_mixed_scenarios --scenario-set composite
+python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 0 --episodes 20 --scenario-set composite
+python -m src.evaluation.eval_highlevel_selector --mode random --episodes 20 --scenario-set composite
 ```
 
 项目评估分三层：
@@ -267,6 +268,8 @@ python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 0 -
 - C. high-level mixed threat selector evaluation：`eval_highlevel_selector.py`
 
 高层 PPO 目标不是识别 S1/S2/S3/S4 标签，而是在复合威胁中学习 option 选择与切换。
+
+`--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）。
 
 ### 6.7 冻结低层后训练上层 PPO 切换器
 ```powershell

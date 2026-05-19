@@ -1,0 +1,241 @@
+from __future__ import annotations
+
+import argparse
+import csv
+from pathlib import Path
+from typing import Any
+
+from src.evaluation.eval_lowlevel_diagnostics import MODEL_FILENAMES
+
+SKILL_ROWS = [
+    ("pi1", "rear_close_threat", "sac_low_1_rear_close_threat.zip"),
+    ("pi2", "flank_threat", "sac_low_2_flank_threat.zip"),
+    ("pi3", "boundary_constrained", "sac_low_3_boundary_constrained.zip"),
+    ("pi4", "vertical_z_threat", "sac_low_4_vertical_z_threat.zip"),
+]
+
+# Option-level thresholds (normalized feature space from observation schema)
+REAR_DIST_GAIN_MIN = 0.08
+REAR_SAFE_DISTANCE = 0.56
+REAR_CLOSE_RELIEF_MAX = 0.05
+
+FLANK_THREAT_REDUCTION_MIN = 0.15
+FLANK_SAFE_THREAT_RIGHT_ABS = 0.35
+FLANK_DISTANCE_WORSE_LIMIT = -0.05
+
+BOUNDARY_SAFE_MARGIN = 0.45
+BOUNDARY_MARGIN_IMPROVE_MIN = 0.10
+BOUNDARY_DISTANCE_WORSE_LIMIT = -0.10
+
+VERTICAL_BAND_LOW = 0.25
+VERTICAL_BAND_HIGH = 0.70
+VERTICAL_MAINTAIN_DROP_MAX = 0.12
+VERTICAL_Z_MARGIN_SAFE = 0.20
+
+
+def boundary_margin(state: Any, term_cfg: Any) -> float:
+    return min(
+        state.evader.x - term_cfg.x_min,
+        term_cfg.x_max - state.evader.x,
+        state.evader.y - term_cfg.y_min,
+        term_cfg.y_max - state.evader.y,
+        state.evader.z - term_cfg.z_min,
+        term_cfg.z_max - state.evader.z,
+    )
+
+
+def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> dict[str, float | int | str | bool]:
+    from src.training.sac_env import PursuitEscapeGymEnv
+
+    env = PursuitEscapeGymEnv(scenario=scenario)
+    obs, _ = env.reset()
+    state0 = env.inner.state
+    assert state0 is not None
+    start = dict(env.inner._observation(closing_speed=0.0))
+
+    start_dist = float(start["distance"])
+    start_close = float(start["closing_speed"])
+    start_threat_right = abs(float(start["threat_right"]))
+    start_min_margin = min(start["boundary_margin_x"], start["boundary_margin_y"], start["boundary_margin_z"])
+    start_z_sep = abs(state0.evader.z - state0.pursuer.z)
+
+    completion_step = skill_horizon
+    skill_completed = False
+    handoff_to_boundary = False
+    z_out_of_bounds = False
+    out_of_bounds = False
+    capture_before_completion = False
+
+    last = start
+    outcome = "running"
+
+    for step in range(1, skill_horizon + 1):
+        action, _ = model.predict(obs, deterministic=True)
+        obs, _, terminated, truncated, info = env.step(action)
+        last = env.inner._observation(closing_speed=float(info.get("closing_speed", 0.0)))
+        outcome = str(info.get("outcome", "running"))
+
+        dist_gain_now = float(last["distance"]) - start_dist
+        close_now = float(last["closing_speed"])
+        right_now = abs(float(last["threat_right"]))
+        margin_now = min(last["boundary_margin_x"], last["boundary_margin_y"], last["boundary_margin_z"])
+        z_sep_now = abs(env.inner.state.evader.z - env.inner.state.pursuer.z)
+
+        if policy == "pi1":
+            skill_completed = (
+                (dist_gain_now >= REAR_DIST_GAIN_MIN or float(last["distance"]) >= REAR_SAFE_DISTANCE)
+                and close_now <= REAR_CLOSE_RELIEF_MAX
+                and outcome != "captured"
+            )
+        elif policy == "pi2":
+            skill_completed = (
+                ((start_threat_right - right_now) >= FLANK_THREAT_REDUCTION_MIN or right_now <= FLANK_SAFE_THREAT_RIGHT_ABS)
+                and dist_gain_now >= FLANK_DISTANCE_WORSE_LIMIT
+                and outcome != "captured"
+            )
+        elif policy == "pi3":
+            skill_completed = (
+                (margin_now >= BOUNDARY_SAFE_MARGIN or (margin_now - start_min_margin) >= BOUNDARY_MARGIN_IMPROVE_MIN)
+                and dist_gain_now >= BOUNDARY_DISTANCE_WORSE_LIMIT
+                and outcome != "out_of_bounds"
+            )
+        else:  # pi4 controlled vertical maneuver
+            in_target_band = VERTICAL_BAND_LOW <= z_sep_now <= VERTICAL_BAND_HIGH
+            started_in_band = VERTICAL_BAND_LOW <= start_z_sep <= VERTICAL_BAND_HIGH
+            maintained_band = started_in_band and z_sep_now >= max(VERTICAL_BAND_LOW, start_z_sep - VERTICAL_MAINTAIN_DROP_MAX)
+            skill_completed = (
+                (in_target_band or maintained_band)
+                and float(last["boundary_margin_z"]) >= VERTICAL_Z_MARGIN_SAFE
+                and not z_out_of_bounds
+                and outcome != "captured"
+            )
+
+        if skill_completed:
+            completion_step = step
+            break
+
+        if outcome == "captured":
+            capture_before_completion = True
+            break
+
+        if outcome == "out_of_bounds":
+            out_of_bounds = True
+            s = env.inner.state
+            assert s is not None
+            z_out_of_bounds = s.evader.z <= env.inner.term_cfg.z_min or s.evader.z >= env.inner.term_cfg.z_max
+            if policy in {"pi1", "pi2", "pi4"} and not z_out_of_bounds:
+                handoff_to_boundary = True
+            break
+
+        if terminated or truncated:
+            break
+
+    s_end = env.inner.state
+    assert s_end is not None
+    end_dist = float(last["distance"])
+    end_close = float(last["closing_speed"])
+    end_threat_right = abs(float(last["threat_right"]))
+    end_min_margin = min(last["boundary_margin_x"], last["boundary_margin_y"], last["boundary_margin_z"])
+    end_z_sep = abs(s_end.evader.z - s_end.pursuer.z)
+
+    vertical_target_band = VERTICAL_BAND_LOW <= end_z_sep <= VERTICAL_BAND_HIGH
+    vertical_maintained = (
+        (VERTICAL_BAND_LOW <= start_z_sep <= VERTICAL_BAND_HIGH and end_z_sep >= max(VERTICAL_BAND_LOW, start_z_sep - VERTICAL_MAINTAIN_DROP_MAX))
+        or vertical_target_band
+    )
+
+    return {
+        "outcome": outcome,
+        "skill_completed": skill_completed,
+        "completion_step": completion_step,
+        "distance_gain": end_dist - start_dist,
+        "closing_speed_reduction": start_close - end_close,
+        "threat_right_abs_reduction": start_threat_right - end_threat_right,
+        "lateral_threat_reduction": start_threat_right - end_threat_right,
+        "min_boundary_margin_improvement": end_min_margin - start_min_margin,
+        "return_to_safe_region": end_min_margin >= BOUNDARY_SAFE_MARGIN,
+        "vertical_separation_gain": end_z_sep - start_z_sep,
+        "vertical_target_band": vertical_target_band,
+        "vertical_separation_maintenance": vertical_maintained,
+        "controlled_z_margin": float(last["boundary_margin_z"]) >= VERTICAL_Z_MARGIN_SAFE,
+        "capture_avoidance": not capture_before_completion,
+        "out_of_bounds": out_of_bounds or outcome == "out_of_bounds",
+        "z_out_of_bounds": z_out_of_bounds,
+        "handoff_to_boundary": handoff_to_boundary,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Option-level low-level skill diagnostics on home scenarios")
+    parser.add_argument("--episodes", type=int, default=30)
+    parser.add_argument("--skill-horizon", type=int, default=80)
+    parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
+    args = parser.parse_args()
+
+    from stable_baselines3 import SAC
+
+    checkpoint_dir = Path(args.checkpoint_dir)
+    for filename in MODEL_FILENAMES:
+        path = checkpoint_dir / filename
+        if not path.exists():
+            print(f"Missing checkpoint: {path}")
+            print("Please run this script locally after training low-level SAC policies.")
+            return
+
+    rows: list[dict[str, Any]] = []
+    for policy, scenario, filename in SKILL_ROWS:
+        model = SAC.load(str(checkpoint_dir / filename))
+        eps = [run_episode(model, policy, scenario, args.skill_horizon) for _ in range(args.episodes)]
+        n = max(len(eps), 1)
+
+        def rate(key: str) -> float:
+            return sum(1 for e in eps if bool(e[key])) / n
+
+        def avg(key: str) -> float:
+            return sum(float(e[key]) for e in eps) / n
+
+        skill_success_rate = rate("skill_completed")
+        row = {
+            "policy": policy,
+            "scenario": scenario,
+            "episodes": args.episodes,
+            "skill_horizon": args.skill_horizon,
+            "skill_success_rate": skill_success_rate,
+            "skill_completed_rate": rate("skill_completed"),
+            "avg_completion_step": avg("completion_step"),
+            "distance_gain": avg("distance_gain"),
+            "closing_speed_reduction": avg("closing_speed_reduction"),
+            "threat_right_abs_reduction": avg("threat_right_abs_reduction"),
+            "min_boundary_margin_improvement": avg("min_boundary_margin_improvement"),
+            "return_to_safe_region_rate": rate("return_to_safe_region"),
+            "vertical_separation_gain": avg("vertical_separation_gain"),
+            "vertical_target_band_rate": rate("vertical_target_band"),
+            "vertical_separation_maintenance_rate": rate("vertical_separation_maintenance"),
+            "controlled_z_margin_rate": rate("controlled_z_margin"),
+            "out_of_bounds_rate": rate("out_of_bounds"),
+            "z_out_of_bounds_rate": rate("z_out_of_bounds"),
+            "handoff_to_boundary_rate": rate("handoff_to_boundary"),
+            "capture_avoidance_rate": rate("capture_avoidance"),
+            "rear_skill_success_rate": rate("skill_completed") if policy == "pi1" else 0.0,
+            "flank_skill_success_rate": rate("skill_completed") if policy == "pi2" else 0.0,
+            "boundary_skill_success_rate": rate("skill_completed") if policy == "pi3" else 0.0,
+            "vertical_skill_success_rate": rate("skill_completed") if policy == "pi4" else 0.0,
+        }
+        rows.append(row)
+        print(
+            f"{policy}@{scenario}: skill_success_rate={skill_success_rate:.3f}, "
+            f"completed={row['skill_completed_rate']:.3f}, avg_step={row['avg_completion_step']:.1f}, "
+            f"handoff_to_boundary={row['handoff_to_boundary_rate']:.3f}"
+        )
+
+    out_csv = Path("outputs/evaluation/lowlevel_skill_diagnostics.csv")
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    with out_csv.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"[csv] saved: {out_csv}")
+
+
+if __name__ == "__main__":
+    main()

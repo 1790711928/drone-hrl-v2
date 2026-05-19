@@ -255,6 +255,19 @@ python -m src.evaluation.eval_boundary_skill_diagnostics --episodes 30 --skill-h
 
 注意：它用于 **boundary recovery option** 诊断，不替代 full-episode evaluation。
 
+### 6.7 High-level mixed threat selector 评估
+```powershell
+python -m src.evaluation.inspect_highlevel_mixed_scenarios
+python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 0 --episodes 20 --scenario-set mixed
+```
+
+项目评估分三层：
+- A. option-level skill evaluation：`eval_lowlevel_skills.py`
+- B. full-episode single-policy stress test：`eval_lowlevel_diagnostics.py`
+- C. high-level mixed threat selector evaluation：`eval_highlevel_selector.py`
+
+高层 PPO 目标不是识别 S1/S2/S3/S4 标签，而是在复合威胁中学习 option 选择与切换。
+
 ### 6.7 冻结低层后训练上层 PPO 切换器
 ```powershell
 python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip

@@ -21,12 +21,12 @@ def run_episode(model: Any, scenario: str, skill_horizon: int) -> dict[str, floa
 
     env = PursuitEscapeGymEnv(scenario=scenario)
     obs, _ = env.reset()
-    start = dict(env.unwrapped_env._observation(closing_speed=0.0))
+    start = dict(env.inner._observation(closing_speed=0.0))
     start_margin = min(start["boundary_margin_x"], start["boundary_margin_y"], start["boundary_margin_z"])
     start_dist = float(start["distance"])
     start_close = float(start["closing_speed"])
     start_threat_right = abs(float(start["threat_right"]))
-    start_z_sep = abs(env.unwrapped_env.state.evader.z - env.unwrapped_env.state.pursuer.z)
+    start_z_sep = abs(env.inner.state.evader.z - env.inner.state.pursuer.z)
 
     min_margin = start_margin
     min_dist = start_dist
@@ -36,7 +36,7 @@ def run_episode(model: Any, scenario: str, skill_horizon: int) -> dict[str, floa
     for _ in range(skill_horizon):
         action, _ = model.predict(obs, deterministic=True)
         obs, _, terminated, truncated, info = env.step(action)
-        last = env.unwrapped_env._observation(closing_speed=float(info.get("closing_speed", 0.0)))
+        last = env.inner._observation(closing_speed=float(info.get("closing_speed", 0.0)))
         margin = min(last["boundary_margin_x"], last["boundary_margin_y"], last["boundary_margin_z"])
         min_margin = min(min_margin, margin)
         min_dist = min(min_dist, float(last["distance"]))
@@ -44,7 +44,7 @@ def run_episode(model: Any, scenario: str, skill_horizon: int) -> dict[str, floa
         if terminated or truncated:
             break
 
-    state = env.unwrapped_env.state
+    state = env.inner.state
     assert state is not None
     end_dist = float(last["distance"])
     end_close = float(last["closing_speed"])
@@ -65,7 +65,7 @@ def run_episode(model: Any, scenario: str, skill_horizon: int) -> dict[str, floa
         "out_of_bounds": outcome == "out_of_bounds",
         "vertical_separation_gain": end_z_sep - start_z_sep,
         "controlled_z_margin": float(last["boundary_margin_z"]) > 0.20,
-        "z_out_of_bounds": outcome == "out_of_bounds" and (state.evader.z <= env.unwrapped_env.term_cfg.z_min or state.evader.z >= env.unwrapped_env.term_cfg.z_max),
+        "z_out_of_bounds": outcome == "out_of_bounds" and (state.evader.z <= env.inner.term_cfg.z_min or state.evader.z >= env.inner.term_cfg.z_max),
     }
 
 

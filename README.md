@@ -210,14 +210,36 @@ python -m src.training.train_lowlevel_all --timesteps 40000 --mix-ratio 0.2
 
 
 
-### 6.3 先做 4x4 低层评估（不同时训练）
+### 6.3 Full-episode 单策略评估（4x4）
 ```powershell
 python -m src.evaluation.eval_lowlevel_matrix --episodes 100
+python -m src.evaluation.eval_lowlevel_diagnostics --episodes 30
 ```
 
-判据：每个低层策略 `pi_i` 在自己的主场景 `S_i` 上应当最好（至少不差于其它策略）。
+说明：这是 **full-episode single-policy evaluation**。它用于看“单个低层策略完整跑一局”的表现，
+但不等同于 HRL 最终表现；也不能单独否定非 boundary 底层策略（因为最终会由高层 selector 切换策略）。
 
-### 6.4 冻结低层后训练上层 PPO 切换器
+### 6.4 Skill-level 低层专属能力评估
+```powershell
+python -m src.evaluation.eval_lowlevel_skills --episodes 30 --skill-horizon 80
+```
+
+该脚本只在每个策略主场景内评估局部技能（短时域），输出：
+- pi1/rear_close_threat：`distance_gain`、`closing_speed_reduction`、`capture_avoidance_rate`、`reached_safe_distance_rate`
+- pi2/flank_threat：`lateral_threat_reduction`、`threat_right_abs_reduction`、`distance_gain`、`capture_avoidance_rate`
+- pi3/boundary_constrained：`min_boundary_margin_improvement`、`return_to_safe_region_rate`、`out_of_bounds_rate`、`distance_gain`
+- pi4/vertical_z_threat：`vertical_separation_gain`、`controlled_z_margin_rate`、`z_out_of_bounds_rate`、`distance_gain`
+
+CSV 输出：`outputs/evaluation/lowlevel_skill_diagnostics.csv`
+
+### 6.5 单策略失败机制诊断（行为层）
+```powershell
+python -m src.evaluation.eval_policy_behavior --scenario rear_close_threat --model outputs/checkpoints/sac_low_1_rear_close_threat.zip --episodes 30
+```
+
+该脚本用于解释失败机制（越界轴向、动作激进程度、pitch/yaw 率、z 分离等），不直接用于调 reward。
+
+### 6.6 冻结低层后训练上层 PPO 切换器
 ```powershell
 python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip
 ```

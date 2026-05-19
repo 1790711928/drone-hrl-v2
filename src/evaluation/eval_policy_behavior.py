@@ -108,7 +108,7 @@ def main() -> None:
         info = {"outcome": "timeout", "distance": 0.0}
 
         while not done:
-            state = env.unwrapped_env.state
+            state = env.inner.state
             if state is not None:
                 xs.append(state.evader.x)
                 ys.append(state.evader.y)
@@ -127,7 +127,7 @@ def main() -> None:
             ep_reward += reward
             done = terminated or truncated
 
-        state = env.unwrapped_env.state
+        state = env.inner.state
         assert state is not None
         xs.append(state.evader.x)
         ys.append(state.evader.y)
@@ -146,12 +146,12 @@ def main() -> None:
             x=state.evader.x,
             y=state.evader.y,
             z=state.evader.z,
-            x_min=env.unwrapped_env.term_cfg.x_min,
-            x_max=env.unwrapped_env.term_cfg.x_max,
-            y_min=env.unwrapped_env.term_cfg.y_min,
-            y_max=env.unwrapped_env.term_cfg.y_max,
-            z_min=env.unwrapped_env.term_cfg.z_min,
-            z_max=env.unwrapped_env.term_cfg.z_max,
+            x_min=env.inner.term_cfg.x_min,
+            x_max=env.inner.term_cfg.x_max,
+            y_min=env.inner.term_cfg.y_min,
+            y_max=env.inner.term_cfg.y_max,
+            z_min=env.inner.term_cfg.z_min,
+            z_max=env.inner.term_cfg.z_max,
         )
         if outcome != "out_of_bounds":
             axis = "none"
@@ -174,12 +174,12 @@ def main() -> None:
             "max_z": max(zs),
             "out_of_bounds_axis": axis,
             "min_boundary_margin": min(
-                state.evader.x - env.unwrapped_env.term_cfg.x_min,
-                env.unwrapped_env.term_cfg.x_max - state.evader.x,
-                state.evader.y - env.unwrapped_env.term_cfg.y_min,
-                env.unwrapped_env.term_cfg.y_max - state.evader.y,
-                state.evader.z - env.unwrapped_env.term_cfg.z_min,
-                env.unwrapped_env.term_cfg.z_max - state.evader.z,
+                state.evader.x - env.inner.term_cfg.x_min,
+                env.inner.term_cfg.x_max - state.evader.x,
+                state.evader.y - env.inner.term_cfg.y_min,
+                env.inner.term_cfg.y_max - state.evader.y,
+                state.evader.z - env.inner.term_cfg.z_min,
+                env.inner.term_cfg.z_max - state.evader.z,
             ),
             "min_distance": min(dists),
             "max_distance": max(dists),

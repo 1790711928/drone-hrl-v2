@@ -231,7 +231,9 @@ python -m src.evaluation.eval_lowlevel_skills --episodes 30 --skill-horizon 80
 - pi4 使用“controlled vertical maneuver”定义：强调垂直分离落在目标区间/维持稳定 + z 边界可控，而不是无限增加 vertical separation。
 
 主要输出字段：
-`skill_success_rate`、`skill_completed_rate`、`avg_completion_step`、`distance_gain`、`closing_speed_reduction`、`threat_right_abs_reduction`、`min_boundary_margin_improvement`、`return_to_safe_region_rate`、`vertical_target_band_rate`、`vertical_separation_maintenance_rate`、`controlled_z_margin_rate`、`out_of_bounds_rate`、`z_out_of_bounds_rate`、`handoff_to_boundary_rate`。
+`skill_success_rate`（option-level） 、`skill_completed_rate`、`avg_completion_step`、`distance_gain`、`closing_speed_reduction`、`threat_right_abs_reduction`、`min_boundary_margin_improvement`、`return_to_safe_region_rate`、`vertical_target_band_rate`、`vertical_separation_maintenance_rate`、`controlled_z_margin_rate`、`out_of_bounds_rate`、`z_out_of_bounds_rate`、`handoff_to_boundary_rate`。
+
+说明：pi3 的成功判定以 `return_to_safe_region` 为核心；`handoff_to_boundary` 表示高层应切换到 pi3，不等于该底层技能直接失败。
 
 CSV 输出：`outputs/evaluation/lowlevel_skill_diagnostics.csv`
 

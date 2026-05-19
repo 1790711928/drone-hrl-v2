@@ -14,7 +14,6 @@ SKILL_ROWS = [
     ("pi4", "vertical_z_threat", "sac_low_4_vertical_z_threat.zip"),
 ]
 
-# Option-level thresholds (normalized feature space from observation schema)
 REAR_DIST_GAIN_MIN = 0.08
 REAR_SAFE_DISTANCE = 0.56
 REAR_CLOSE_RELIEF_MAX = 0.05
@@ -24,24 +23,16 @@ FLANK_SAFE_THREAT_RIGHT_ABS = 0.35
 FLANK_DISTANCE_WORSE_LIMIT = -0.05
 
 BOUNDARY_SAFE_MARGIN = 0.45
-BOUNDARY_MARGIN_IMPROVE_MIN = 0.10
+BOUNDARY_DANGER_MARGIN = 0.20
+BOUNDARY_MARGIN_IMPROVE_STRONG = 0.12
+BOUNDARY_MARGIN_IMPROVE_MIN = 0.08
 BOUNDARY_DISTANCE_WORSE_LIMIT = -0.10
 
 VERTICAL_BAND_LOW = 0.25
 VERTICAL_BAND_HIGH = 0.70
 VERTICAL_MAINTAIN_DROP_MAX = 0.12
 VERTICAL_Z_MARGIN_SAFE = 0.20
-
-
-def boundary_margin(state: Any, term_cfg: Any) -> float:
-    return min(
-        state.evader.x - term_cfg.x_min,
-        term_cfg.x_max - state.evader.x,
-        state.evader.y - term_cfg.y_min,
-        term_cfg.y_max - state.evader.y,
-        state.evader.z - term_cfg.z_min,
-        term_cfg.z_max - state.evader.z,
-    )
+VERTICAL_DANGER_MARGIN = 0.15
 
 
 def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> dict[str, float | int | str | bool]:
@@ -49,15 +40,14 @@ def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> d
 
     env = PursuitEscapeGymEnv(scenario=scenario)
     obs, _ = env.reset()
-    state0 = env.inner.state
-    assert state0 is not None
     start = dict(env.inner._observation(closing_speed=0.0))
 
     start_dist = float(start["distance"])
     start_close = float(start["closing_speed"])
     start_threat_right = abs(float(start["threat_right"]))
-    start_min_margin = min(start["boundary_margin_x"], start["boundary_margin_y"], start["boundary_margin_z"])
-    start_z_sep = abs(state0.evader.z - state0.pursuer.z)
+    start_margin = float(start["min_boundary_margin"])
+    start_z_sep = abs(float(start["dz"]))
+    start_evader_z = env.inner.state.evader.z
 
     completion_step = skill_horizon
     skill_completed = False
@@ -65,6 +55,7 @@ def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> d
     z_out_of_bounds = False
     out_of_bounds = False
     capture_before_completion = False
+    danger_boundary_seen = start_margin <= BOUNDARY_DANGER_MARGIN
 
     last = start
     outcome = "running"
@@ -78,8 +69,10 @@ def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> d
         dist_gain_now = float(last["distance"]) - start_dist
         close_now = float(last["closing_speed"])
         right_now = abs(float(last["threat_right"]))
-        margin_now = min(last["boundary_margin_x"], last["boundary_margin_y"], last["boundary_margin_z"])
-        z_sep_now = abs(env.inner.state.evader.z - env.inner.state.pursuer.z)
+        margin_now = float(last["min_boundary_margin"])
+        z_sep_now = abs(float(last["dz"]))
+        z_margin_now = float(last["boundary_margin_z"])
+        danger_boundary_seen = danger_boundary_seen or margin_now <= BOUNDARY_DANGER_MARGIN
 
         if policy == "pi1":
             skill_completed = (
@@ -94,21 +87,27 @@ def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> d
                 and outcome != "captured"
             )
         elif policy == "pi3":
+            strong_return = margin_now >= BOUNDARY_SAFE_MARGIN
+            recovered_not_danger = (margin_now - start_margin) >= BOUNDARY_MARGIN_IMPROVE_STRONG and margin_now > BOUNDARY_DANGER_MARGIN
+            mild_recovered = (margin_now - start_margin) >= BOUNDARY_MARGIN_IMPROVE_MIN and margin_now > (BOUNDARY_DANGER_MARGIN + 0.08)
             skill_completed = (
-                (margin_now >= BOUNDARY_SAFE_MARGIN or (margin_now - start_min_margin) >= BOUNDARY_MARGIN_IMPROVE_MIN)
+                (strong_return or recovered_not_danger or mild_recovered)
                 and dist_gain_now >= BOUNDARY_DISTANCE_WORSE_LIMIT
                 and outcome != "out_of_bounds"
             )
-        else:  # pi4 controlled vertical maneuver
+        else:
             in_target_band = VERTICAL_BAND_LOW <= z_sep_now <= VERTICAL_BAND_HIGH
             started_in_band = VERTICAL_BAND_LOW <= start_z_sep <= VERTICAL_BAND_HIGH
             maintained_band = started_in_band and z_sep_now >= max(VERTICAL_BAND_LOW, start_z_sep - VERTICAL_MAINTAIN_DROP_MAX)
             skill_completed = (
                 (in_target_band or maintained_band)
-                and float(last["boundary_margin_z"]) >= VERTICAL_Z_MARGIN_SAFE
-                and not z_out_of_bounds
+                and z_margin_now >= VERTICAL_Z_MARGIN_SAFE
                 and outcome != "captured"
+                and not z_out_of_bounds
             )
+
+        if policy in {"pi1", "pi2", "pi4"} and skill_completed and (margin_now <= BOUNDARY_DANGER_MARGIN):
+            handoff_to_boundary = True
 
         if skill_completed:
             completion_step = step
@@ -135,14 +134,24 @@ def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> d
     end_dist = float(last["distance"])
     end_close = float(last["closing_speed"])
     end_threat_right = abs(float(last["threat_right"]))
-    end_min_margin = min(last["boundary_margin_x"], last["boundary_margin_y"], last["boundary_margin_z"])
-    end_z_sep = abs(s_end.evader.z - s_end.pursuer.z)
+    end_margin = float(last["min_boundary_margin"])
+    end_z_sep = abs(float(last["dz"]))
 
     vertical_target_band = VERTICAL_BAND_LOW <= end_z_sep <= VERTICAL_BAND_HIGH
     vertical_maintained = (
         (VERTICAL_BAND_LOW <= start_z_sep <= VERTICAL_BAND_HIGH and end_z_sep >= max(VERTICAL_BAND_LOW, start_z_sep - VERTICAL_MAINTAIN_DROP_MAX))
         or vertical_target_band
     )
+
+    if policy in {"pi1", "pi2", "pi4"} and (danger_boundary_seen or end_margin <= BOUNDARY_DANGER_MARGIN):
+        handoff_to_boundary = True
+
+    z_oob_direction = "none"
+    if z_out_of_bounds:
+        if s_end.evader.z <= env.inner.term_cfg.z_min:
+            z_oob_direction = "z_min"
+        elif s_end.evader.z >= env.inner.term_cfg.z_max:
+            z_oob_direction = "z_max"
 
     return {
         "outcome": outcome,
@@ -152,15 +161,20 @@ def run_episode(model: Any, policy: str, scenario: str, skill_horizon: int) -> d
         "closing_speed_reduction": start_close - end_close,
         "threat_right_abs_reduction": start_threat_right - end_threat_right,
         "lateral_threat_reduction": start_threat_right - end_threat_right,
-        "min_boundary_margin_improvement": end_min_margin - start_min_margin,
-        "return_to_safe_region": end_min_margin >= BOUNDARY_SAFE_MARGIN,
+        "min_boundary_margin_improvement": end_margin - start_margin,
+        "return_to_safe_region": end_margin >= BOUNDARY_SAFE_MARGIN,
         "vertical_separation_gain": end_z_sep - start_z_sep,
+        "final_vertical_separation": end_z_sep,
+        "min_vertical_separation": min(start_z_sep, end_z_sep),
+        "max_vertical_separation": max(start_z_sep, end_z_sep),
+        "final_z_change": s_end.evader.z - start_evader_z,
         "vertical_target_band": vertical_target_band,
         "vertical_separation_maintenance": vertical_maintained,
         "controlled_z_margin": float(last["boundary_margin_z"]) >= VERTICAL_Z_MARGIN_SAFE,
         "capture_avoidance": not capture_before_completion,
         "out_of_bounds": out_of_bounds or outcome == "out_of_bounds",
         "z_out_of_bounds": z_out_of_bounds,
+        "z_oob_direction": z_oob_direction,
         "handoff_to_boundary": handoff_to_boundary,
     }
 
@@ -194,6 +208,8 @@ def main() -> None:
         def avg(key: str) -> float:
             return sum(float(e[key]) for e in eps) / n
 
+        z_oob_min_rate = sum(1 for e in eps if e["z_oob_direction"] == "z_min") / n
+        z_oob_max_rate = sum(1 for e in eps if e["z_oob_direction"] == "z_max") / n
         skill_success_rate = rate("skill_completed")
         row = {
             "policy": policy,
@@ -209,23 +225,24 @@ def main() -> None:
             "min_boundary_margin_improvement": avg("min_boundary_margin_improvement"),
             "return_to_safe_region_rate": rate("return_to_safe_region"),
             "vertical_separation_gain": avg("vertical_separation_gain"),
+            "final_vertical_separation": avg("final_vertical_separation"),
+            "min_vertical_separation": avg("min_vertical_separation"),
+            "max_vertical_separation": avg("max_vertical_separation"),
+            "final_z_change": avg("final_z_change"),
             "vertical_target_band_rate": rate("vertical_target_band"),
             "vertical_separation_maintenance_rate": rate("vertical_separation_maintenance"),
             "controlled_z_margin_rate": rate("controlled_z_margin"),
             "out_of_bounds_rate": rate("out_of_bounds"),
             "z_out_of_bounds_rate": rate("z_out_of_bounds"),
+            "z_oob_min_rate": z_oob_min_rate,
+            "z_oob_max_rate": z_oob_max_rate,
             "handoff_to_boundary_rate": rate("handoff_to_boundary"),
-            "capture_avoidance_rate": rate("capture_avoidance"),
-            "rear_skill_success_rate": rate("skill_completed") if policy == "pi1" else 0.0,
-            "flank_skill_success_rate": rate("skill_completed") if policy == "pi2" else 0.0,
-            "boundary_skill_success_rate": rate("skill_completed") if policy == "pi3" else 0.0,
-            "vertical_skill_success_rate": rate("skill_completed") if policy == "pi4" else 0.0,
         }
         rows.append(row)
         print(
             f"{policy}@{scenario}: skill_success_rate={skill_success_rate:.3f}, "
-            f"completed={row['skill_completed_rate']:.3f}, avg_step={row['avg_completion_step']:.1f}, "
-            f"handoff_to_boundary={row['handoff_to_boundary_rate']:.3f}"
+            f"return_to_safe={row['return_to_safe_region_rate']:.3f}, "
+            f"handoff={row['handoff_to_boundary_rate']:.3f}, z_oob={row['z_out_of_bounds_rate']:.3f}"
         )
 
     out_csv = Path("outputs/evaluation/lowlevel_skill_diagnostics.csv")

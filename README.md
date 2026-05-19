@@ -224,11 +224,14 @@ python -m src.evaluation.eval_lowlevel_diagnostics --episodes 30
 python -m src.evaluation.eval_lowlevel_skills --episodes 30 --skill-horizon 80
 ```
 
-该脚本只在每个策略主场景内评估局部技能（短时域），输出：
-- pi1/rear_close_threat：`distance_gain`、`closing_speed_reduction`、`capture_avoidance_rate`、`reached_safe_distance_rate`
-- pi2/flank_threat：`lateral_threat_reduction`、`threat_right_abs_reduction`、`distance_gain`、`capture_avoidance_rate`
-- pi3/boundary_constrained：`min_boundary_margin_improvement`、`return_to_safe_region_rate`、`out_of_bounds_rate`、`distance_gain`
-- pi4/vertical_z_threat：`vertical_separation_gain`、`controlled_z_margin_rate`、`z_out_of_bounds_rate`、`distance_gain`
+该脚本是 **option-level / skill-level evaluation**（短时域局部技能评估），不是完整 episode 逃生评估。
+
+- 支持 early skill termination：在 `skill_horizon` 内一旦技能完成局部目标就提前结束，不强迫继续跑到 episode 末尾。
+- 对非 boundary 技能（pi1/pi2/pi4）若完成技能后出现 x/y 边界风险，会记为 `handoff_to_boundary`（提示高层应切到 pi3），不直接否定该技能。
+- pi4 使用“controlled vertical maneuver”定义：强调垂直分离落在目标区间/维持稳定 + z 边界可控，而不是无限增加 vertical separation。
+
+主要输出字段：
+`skill_success_rate`、`skill_completed_rate`、`avg_completion_step`、`distance_gain`、`closing_speed_reduction`、`threat_right_abs_reduction`、`min_boundary_margin_improvement`、`return_to_safe_region_rate`、`vertical_target_band_rate`、`vertical_separation_maintenance_rate`、`controlled_z_margin_rate`、`out_of_bounds_rate`、`z_out_of_bounds_rate`、`handoff_to_boundary_rate`。
 
 CSV 输出：`outputs/evaluation/lowlevel_skill_diagnostics.csv`
 

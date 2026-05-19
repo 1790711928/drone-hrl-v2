@@ -244,7 +244,16 @@ python -m src.evaluation.eval_policy_behavior --scenario rear_close_threat --mod
 
 该脚本用于解释失败机制（越界轴向、动作激进程度、pitch/yaw 率、z 分离等），不直接用于调 reward。
 
-### 6.6 冻结低层后训练上层 PPO 切换器
+### 6.6 pi3 边界恢复诊断（option-level）
+```powershell
+python -m src.evaluation.eval_boundary_skill_diagnostics --episodes 30 --skill-horizon 80
+```
+
+该脚本专门诊断 `pi3` 在 `boundary_constrained` 下的边界恢复失败机制（越界轴向、是否回到 safe region、动作是否过保守/过激进等）。
+
+注意：它用于 **boundary recovery option** 诊断，不替代 full-episode evaluation。
+
+### 6.7 冻结低层后训练上层 PPO 切换器
 ```powershell
 python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip
 ```

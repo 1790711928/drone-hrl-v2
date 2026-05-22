@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import argparse
+import random
+from collections import Counter
+from pathlib import Path
+
+from src.training.highlevel_env import HighLevelOptionEnv
+
+
+def heuristic_option(
+    obs,
+    prev_option: int | None,
+    hold_steps: int,
+    *,
+    boundary_danger_threshold: float,
+    boundary_controllable_threshold: float,
+    flank_threshold: float,
+    vertical_threshold: float,
+    rear_distance_threshold: float,
+) -> int:
+    threat_forward = float(obs[22])
+    threat_right = abs(float(obs[23]))
+    threat_up = abs(float(obs[24]))
+    min_boundary_margin = float(obs[17])
+    distance = float(obs[3])
+
+    rear_forward_threshold = -0.60
+
+    # A) danger zone: prioritize boundary recovery
+    if min_boundary_margin < boundary_danger_threshold:
+        candidate = 2
+    # B) controllable zone: handoff from pi3 to threat-specific options
+    elif min_boundary_margin >= boundary_controllable_threshold:
+        if threat_right > flank_threshold:
+            candidate = 1
+        elif threat_up > vertical_threshold:
+            candidate = 3
+        elif threat_forward < rear_forward_threshold and distance < rear_distance_threshold:
+            candidate = 0
+        else:
+            candidate = prev_option if prev_option is not None and prev_option != 2 else 0
+    # C) transition zone: allow very strong flank to intervene, else continue boundary recovery
+    else:
+        very_strong_flank = threat_right > (flank_threshold + 0.10)
+        if very_strong_flank:
+            candidate = 1
+        elif threat_up > (vertical_threshold + 0.08):
+            candidate = 3
+        else:
+            candidate = 2
+
+    # hysteresis: keep current option for at least one high-level step unless clearly better
+    if prev_option is not None and hold_steps < 1 and candidate != prev_option:
+        return prev_option
+    return int(candidate)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate fixed/random/heuristic/high-level selector on scenario sets")
+    parser.add_argument("--episodes", type=int, default=20)
+    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "highlevel"], default="fixed")
+    parser.add_argument("--fixed-policy", type=int, default=0)
+    parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
+    parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite"], default="composite")
+    parser.add_argument("--option-duration", type=int, default=8)
+    parser.add_argument("--switch-penalty", type=float, default=0.02)
+    parser.add_argument("--max-highlevel-steps", type=int, default=80)
+    parser.add_argument("--boundary-danger-threshold", type=float, default=0.15)
+    parser.add_argument("--boundary-controllable-threshold", type=float, default=0.25)
+    parser.add_argument("--flank-threshold", type=float, default=0.65)
+    parser.add_argument("--vertical-threshold", type=float, default=0.55)
+    parser.add_argument("--rear-distance-threshold", type=float, default=0.09)
+    args = parser.parse_args()
+
+    try:
+        from stable_baselines3 import PPO, SAC
+    except Exception as exc:
+        raise RuntimeError("stable-baselines3 is required. Install with: pip install stable-baselines3 gymnasium") from exc
+
+    ckpt_dir = Path(args.checkpoint_dir)
+    low_paths = [
+        ckpt_dir / "sac_low_1_rear_close_threat.zip",
+        ckpt_dir / "sac_low_2_flank_threat.zip",
+        ckpt_dir / "sac_low_3_boundary_constrained.zip",
+        ckpt_dir / "sac_low_4_vertical_z_threat.zip",
+    ]
+    for p in low_paths:
+        if not p.exists():
+            print(f"Missing checkpoint: {p}")
+            print("Please run this script locally after training low-level SAC policies.")
+            return
+
+    low_models = [SAC.load(str(p)) for p in low_paths]
+    env = HighLevelOptionEnv(
+        low_models=low_models,
+        option_duration=args.option_duration,
+        switch_penalty=args.switch_penalty,
+        max_highlevel_steps=args.max_highlevel_steps,
+        scenario_set=args.scenario_set,
+    )
+
+    high_model = None
+    if args.mode == "highlevel":
+        high_path = Path(args.high_model)
+        if not high_path.exists():
+            print(f"Missing checkpoint: {high_path}")
+            print("Please run this script locally after training high-level PPO selector.")
+            return
+        high_model = PPO.load(str(high_path))
+
+    succ = cap = oob = 0
+    total_reward = total_steps = total_switch = 0.0
+    option_usage = [0, 0, 0, 0]
+    scenario_outcomes: dict[str, dict[str, int]] = {}
+    scenario_option_usage: dict[str, list[int]] = {}
+    scenario_switch_counts: dict[str, list[float]] = {}
+    scenario_first_options: dict[str, list[int]] = {}
+    scenario_sequences: dict[str, Counter[str]] = {}
+
+    for _ in range(args.episodes):
+        obs, info = env.reset(options={"scenario_set": args.scenario_set})
+        scen = str(info.get("scenario_name", "unknown"))
+        scenario_outcomes.setdefault(scen, {"escaped": 0, "captured": 0, "out_of_bounds": 0, "timeout": 0})
+        scenario_option_usage.setdefault(scen, [0, 0, 0, 0])
+        scenario_switch_counts.setdefault(scen, [])
+        scenario_first_options.setdefault(scen, [])
+        scenario_sequences.setdefault(scen, Counter())
+
+        done = False
+        ep_reward = 0.0
+        ep_steps = 0
+        outcome = "timeout"
+        prev_option = None
+        hold_steps = 0
+        seq: list[int] = []
+
+        while not done:
+            if args.mode == "fixed":
+                action = int(max(0, min(3, args.fixed_policy)))
+            elif args.mode == "random":
+                action = random.randint(0, 3)
+            elif args.mode == "heuristic":
+                action = heuristic_option(
+                    obs,
+                    prev_option,
+                    hold_steps,
+                    boundary_danger_threshold=args.boundary_danger_threshold,
+                    boundary_controllable_threshold=args.boundary_controllable_threshold,
+                    flank_threshold=args.flank_threshold,
+                    vertical_threshold=args.vertical_threshold,
+                    rear_distance_threshold=args.rear_distance_threshold,
+                )
+            else:
+                assert high_model is not None
+                action, _ = high_model.predict(obs, deterministic=True)
+                action = int(action)
+
+            option_usage[action] += 1
+            scenario_option_usage[scen][action] += 1
+            if not seq:
+                scenario_first_options[scen].append(action)
+
+            if prev_option is None or action != prev_option:
+                hold_steps = 0
+            else:
+                hold_steps += 1
+            prev_option = action
+            seq.append(action)
+
+            obs, reward, terminated, truncated, info = env.step(action)
+            ep_reward += float(reward)
+            ep_steps += 1
+            done = bool(terminated or truncated)
+            outcome = str(info.get("outcome", "timeout"))
+
+        total_reward += ep_reward
+        total_steps += ep_steps
+        sc = float(info.get("switch_count", 0))
+        total_switch += sc
+        scenario_switch_counts[scen].append(sc)
+
+        seq_key = "->".join(f"pi{a+1}" for a in seq[:6])
+        scenario_sequences[scen][seq_key] += 1
+
+        if outcome == "escaped":
+            succ += 1
+        elif outcome == "captured":
+            cap += 1
+        elif outcome == "out_of_bounds":
+            oob += 1
+        scenario_outcomes[scen][outcome] = scenario_outcomes[scen].get(outcome, 0) + 1
+
+    n = max(args.episodes, 1)
+    usage_total = max(sum(option_usage), 1)
+    usage_rate = {f"pi{i+1}": option_usage[i] / usage_total for i in range(4)}
+
+    usage_by_scenario: dict[str, dict[str, float]] = {}
+    avg_switch_by_scenario: dict[str, float] = {}
+    first_option_by_scenario: dict[str, dict[str, float]] = {}
+    common_seq_by_scenario: dict[str, list[tuple[str, int]]] = {}
+
+    for scen, counts in scenario_option_usage.items():
+        total = max(sum(counts), 1)
+        usage_by_scenario[scen] = {f"pi{i+1}": counts[i] / total for i in range(4)}
+        sw = scenario_switch_counts.get(scen, [])
+        avg_switch_by_scenario[scen] = sum(sw) / max(len(sw), 1)
+
+        first_counts = [0, 0, 0, 0]
+        for idx in scenario_first_options.get(scen, []):
+            first_counts[idx] += 1
+        first_total = max(sum(first_counts), 1)
+        first_option_by_scenario[scen] = {f"pi{i+1}": first_counts[i] / first_total for i in range(4)}
+
+        common_seq_by_scenario[scen] = scenario_sequences[scen].most_common(3)
+
+    print("=== High-level selector evaluation ===")
+    print(f"mode={args.mode}, episodes={args.episodes}, scenario_set={args.scenario_set}")
+    print(f"success_rate={succ / n:.3f}")
+    print(f"capture_rate={cap / n:.3f}")
+    print(f"out_of_bounds_rate={oob / n:.3f}")
+    print(f"avg_reward={total_reward / n:.3f}")
+    print(f"avg_steps={total_steps / n:.3f}")
+    print(f"avg_switch_count={total_switch / n:.3f}")
+    print(f"option_usage_rate={usage_rate}")
+    print(f"outcome_by_scenario={scenario_outcomes}")
+    print(f"option_usage_by_scenario={usage_by_scenario}")
+    print(f"avg_switch_count_by_scenario={avg_switch_by_scenario}")
+    print(f"first_option_by_scenario={first_option_by_scenario}")
+    print(f"common_option_sequences_by_scenario={common_seq_by_scenario}")
+
+
+if __name__ == "__main__":
+    main()

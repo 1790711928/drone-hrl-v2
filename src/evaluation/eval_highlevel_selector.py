@@ -7,10 +7,39 @@ from pathlib import Path
 from src.training.highlevel_env import HighLevelOptionEnv
 
 
+def heuristic_option(obs, prev_option: int | None, hold_steps: int) -> int:
+    threat_forward = float(obs[22])
+    threat_right = float(obs[23])
+    threat_up = float(obs[24])
+    min_boundary_margin = float(obs[17])
+    distance = float(obs[3])
+
+    boundary_threshold = 0.18
+    flank_threshold = 0.50
+    vertical_threshold = 0.45
+    rear_forward_threshold = -0.60
+    rear_close_distance = 0.08
+
+    if min_boundary_margin < boundary_threshold:
+        candidate = 2
+    elif abs(threat_right) > flank_threshold:
+        candidate = 1
+    elif abs(threat_up) > vertical_threshold:
+        candidate = 3
+    elif threat_forward < rear_forward_threshold and distance < rear_close_distance:
+        candidate = 0
+    else:
+        candidate = prev_option if prev_option is not None else 0
+
+    if prev_option is not None and hold_steps < 1:
+        return prev_option
+    return int(candidate)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate fixed/random/high-level selector on scenario sets")
     parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--mode", choices=["fixed", "random", "highlevel"], default="fixed")
+    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "highlevel"], default="fixed")
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
@@ -70,18 +99,27 @@ def main() -> None:
         ep_reward = 0.0
         ep_steps = 0
         outcome = "timeout"
+        prev_option = None
+        hold_steps = 0
 
         while not done:
             if args.mode == "fixed":
                 action = int(max(0, min(3, args.fixed_policy)))
             elif args.mode == "random":
                 action = random.randint(0, 3)
+            elif args.mode == "heuristic":
+                action = heuristic_option(obs, prev_option, hold_steps)
             else:
                 assert high_model is not None
                 action, _ = high_model.predict(obs, deterministic=True)
                 action = int(action)
 
             option_usage[action] += 1
+            if prev_option is None or action != prev_option:
+                hold_steps = 0
+            else:
+                hold_steps += 1
+            prev_option = action
             obs, reward, terminated, truncated, info = env.step(action)
             ep_reward += float(reward)
             ep_steps += 1

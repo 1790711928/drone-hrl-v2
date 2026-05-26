@@ -9,9 +9,10 @@ from src.training.highlevel_env import BASIC_SCENARIOS, COMPOSITE_SCENARIOS, MIX
 
 def print_obs_line(name: str, obs: dict[str, float]) -> None:
     print(
-        f"  - {name:<28} threat_f={obs['threat_forward']:+.3f} "
-        f"threat_r={obs['threat_right']:+.3f} threat_u={obs['threat_up']:+.3f} "
-        f"min_margin={obs['min_boundary_margin']:.3f} dist={obs['distance']:.3f} los={obs['los_cos']:+.3f}"
+        f"  - {name:<28} ex={obs['evader_x_norm']:+.3f} ey={obs['evader_y_norm']:+.3f} ez={obs['evader_z_norm']:+.3f} "
+        f"bx={obs['boundary_margin_x']:.3f} by={obs['boundary_margin_y']:.3f} bz={obs['boundary_margin_z']:.3f} "
+        f"min_margin={obs['min_boundary_margin']:.3f} tf={obs['threat_forward']:+.3f} tr={obs['threat_right']:+.3f} "
+        f"tu={obs['threat_up']:+.3f} dist={obs['distance']:.3f}"
     )
 
 

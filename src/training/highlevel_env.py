@@ -36,8 +36,8 @@ COMPOSITE_SCENARIOS: dict[str, tuple[Agent3DState, Agent3DState]] = {
         Agent3DState(x=-4.0, y=0.5, z=5.5, speed=11.5, yaw=0.05, pitch=0.15),
     ),
     "composite_flank_boundary": (
-        Agent3DState(x=44.0, y=1.0, z=9.0, speed=9.5, yaw=0.35, pitch=0.0),
-        Agent3DState(x=34.0, y=10.0, z=9.0, speed=11.0, yaw=0.15, pitch=0.0),
+        Agent3DState(x=42.0, y=1.5, z=9.5, speed=9.5, yaw=2.85, pitch=0.0),
+        Agent3DState(x=33.5, y=9.5, z=9.0, speed=11.0, yaw=0.20, pitch=0.0),
     ),
     "composite_rear_boundary": (
         Agent3DState(x=45.0, y=-1.0, z=10.5, speed=9.8, yaw=0.55, pitch=0.0),
@@ -48,8 +48,8 @@ COMPOSITE_SCENARIOS: dict[str, tuple[Agent3DState, Agent3DState]] = {
         Agent3DState(x=38.0, y=0.5, z=1.8, speed=11.0, yaw=0.20, pitch=0.12),
     ),
     "composite_rear_flank_boundary": (
-        Agent3DState(x=44.5, y=0.0, z=8.5, speed=9.6, yaw=0.45, pitch=0.0),
-        Agent3DState(x=37.0, y=5.8, z=8.2, speed=11.2, yaw=0.20, pitch=0.0),
+        Agent3DState(x=42.5, y=0.5, z=9.0, speed=9.6, yaw=2.95, pitch=0.0),
+        Agent3DState(x=35.8, y=6.5, z=8.6, speed=11.2, yaw=0.25, pitch=0.0),
     ),
 }
 

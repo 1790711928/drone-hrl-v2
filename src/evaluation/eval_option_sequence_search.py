@@ -151,24 +151,46 @@ def main() -> None:
 
     print(f"[csv] saved: {out_csv}")
     print("=== Option Sequence Search Summary ===")
-    overall_best = 0.0
-    better_than_fixed_pi3 = False
+
+    scenario_best_table: dict[str, dict[str, str | float | int]] = {}
+    best_rates: list[float] = []
     for scen, best in best_by_scenario.items():
         sr = float(best["best_success_rate"])
-        overall_best = max(overall_best, sr)
-        if sr > 0.767:
-            better_than_fixed_pi3 = True
+        best_rates.append(sr)
+        scenario_best_table[scen] = {
+            "best_sequence": str(best["best_sequence"]),
+            "best_success_rate": sr,
+            "best_option_duration": int(best["best_option_duration"]),
+            "out_of_bounds_rate": float(best["out_of_bounds_rate"]),
+            "avg_steps": float(best["avg_steps"]),
+        }
         print(
             f"{scen}: best_sequence={best['best_sequence']}, best_success_rate={sr:.3f}, "
             f"best_option_duration={best['best_option_duration']}, oob={float(best['out_of_bounds_rate']):.3f}, "
             f"avg_steps={float(best['avg_steps']):.2f}"
         )
 
-    print(f"overall_best_oracle_success_rate={overall_best:.3f}")
-    print(f"exists_sequence_better_than_fixed_pi3_0.767={better_than_fixed_pi3}")
-    for key in ["composite_flank_boundary", "composite_rear_flank_boundary"]:
-        if key in best_by_scenario:
-            print(f"focus_{key}={best_by_scenario[key]}")
+    mean_best = sum(best_rates) / max(len(best_rates), 1)
+    min_best = min(best_rates) if best_rates else 0.0
+    all_scenarios_above_fixed = all(r > 0.767 for r in best_rates) if best_rates else False
+    mean_best_better_than_fixed = mean_best > 0.767
+
+    print(f"mean_best_success_rate_across_scenarios={mean_best:.3f}")
+    print(f"min_best_success_rate_across_scenarios={min_best:.3f}")
+    print(f"scenario_best_table={scenario_best_table}")
+    print(f"all_scenarios_above_fixed_pi3_baseline={all_scenarios_above_fixed}")
+    print(f"mean_best_better_than_fixed_pi3_0.767={mean_best_better_than_fixed}")
+
+    focus_names = ["composite_flank_boundary", "composite_rear_flank_boundary"]
+    for fname in focus_names:
+        focus_rows = [r for r in rows if str(r["scenario"]) == fname]
+        focus_rows.sort(key=lambda r: (float(r["success_rate"]), -float(r["out_of_bounds_rate"]), -float(r["avg_steps"])), reverse=True)
+        print(f"top5_{fname}=")
+        for fr in focus_rows[:5]:
+            print(
+                f"  seq={fr['sequence']}, dur={fr['option_duration']}, sr={float(fr['success_rate']):.3f}, "
+                f"oob={float(fr['out_of_bounds_rate']):.3f}, steps={float(fr['avg_steps']):.2f}"
+            )
 
 
 if __name__ == "__main__":

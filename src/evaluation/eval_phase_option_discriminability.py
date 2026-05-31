@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 from collections import Counter
 from pathlib import Path
 from statistics import mean
@@ -13,6 +14,7 @@ from src.training.highlevel_env import HighLevelOptionEnv, PHASE_SUCCESS_THRESHO
 
 OPTION_NAMES = ("pi1", "pi2", "pi3", "pi4")
 PHASE_TYPES = ("rear", "flank", "boundary", "vertical", "rear_vertical")
+EVAL_MODES = ("one_shot", "sustained")
 EXPECTED_OPTIONS: dict[str, tuple[str, ...]] = {
     "rear": ("pi1",),
     "flank": ("pi2",),
@@ -27,26 +29,38 @@ MODEL_FILENAMES = (
     "sac_low_4_vertical_z_threat.zip",
 )
 CSV_FIELDS = (
+    "eval_mode",
     "phase_type",
     "option",
     "expected_option",
     "episodes",
     "option_duration",
     "phase_success_rate",
+    "one_shot_success_rate",
+    "sustained_success_rate",
+    "improvement_score",
+    "distance_gain",
+    "closing_speed_reduction",
+    "rear_pressure_improvement_score",
+    "threat_right_abs_reduction",
+    "lateral_threat_improvement_score",
+    "min_boundary_margin_change",
+    "boundary_recovery_improvement_score",
+    "vertical_target_band_rate",
+    "threat_up_abs_reduction",
+    "z_margin_change",
+    "vertical_improvement_score",
+    "rear_vertical_combined_score",
     "capture_rate",
     "out_of_bounds_rate",
     "timeout_rate",
-    "avg_completion_step",
     "avg_reward",
-    "avg_distance_gain",
-    "avg_boundary_margin_change",
-    "avg_threat_right_abs_reduction",
-    "avg_vertical_metric",
-    "avg_closing_speed_reduction",
+    "avg_completion_step",
 )
 
-# Representative evader states only select where a standalone injected phase starts.
-# Threat geometry itself remains owned by inject_sequential_phase() in highlevel_env.py.
+# These representative evader states only select where a standalone injected
+# phase starts. Threat geometry and phase thresholds remain owned by
+# highlevel_env.py, so this diagnostic cannot silently tune the benchmark.
 PHASE_SEED_EVADERS: dict[str, Agent3DState] = {
     "rear": Agent3DState(x=0.0, y=0.0, z=12.0, speed=10.0, yaw=0.0, pitch=0.0),
     "flank": Agent3DState(x=0.0, y=0.0, z=11.0, speed=9.8, yaw=0.0, pitch=0.0),
@@ -68,7 +82,11 @@ def parse_phase_types(raw: str) -> list[str]:
     return phases
 
 
-def _reset_standalone_phase(env: HighLevelOptionEnv, phase_type: str):
+def expand_eval_modes(raw: str) -> list[str]:
+    return list(EVAL_MODES) if raw == "both" else [raw]
+
+
+def _reset_standalone_phase(env: HighLevelOptionEnv, phase_type: str) -> None:
     env.prev_option = None
     env.highlevel_step_count = 0
     env.switch_count = 0
@@ -78,20 +96,84 @@ def _reset_standalone_phase(env: HighLevelOptionEnv, phase_type: str):
     env.phase_names = (phase_type,)
     env.phase_success_by_type = {}
     env.phase_failure_by_type = {}
-    return env._inject_current_phase(PHASE_SEED_EVADERS[phase_type])
+    env._inject_current_phase(PHASE_SEED_EVADERS[phase_type])
 
 
-def _vertical_metric(phase_type: str, obs: dict[str, float]) -> float:
+def _estimated_closing_speed(env: HighLevelOptionEnv) -> float:
+    state = env.inner.inner.state
+    assert state is not None
+    ev, pu = state.evader, state.pursuer
+    rel = (ev.x - pu.x, ev.y - pu.y, ev.z - pu.z)
+    rel_norm = max(math.sqrt(sum(value * value for value in rel)), 1e-6)
+
+    def velocity(agent: Agent3DState) -> tuple[float, float, float]:
+        return (
+            agent.speed * math.cos(agent.pitch) * math.cos(agent.yaw),
+            agent.speed * math.cos(agent.pitch) * math.sin(agent.yaw),
+            agent.speed * math.sin(agent.pitch),
+        )
+
+    ev_velocity, pu_velocity = velocity(ev), velocity(pu)
+    distance_rate = sum(rel[index] * (ev_velocity[index] - pu_velocity[index]) for index in range(3)) / rel_norm
+    return -distance_rate
+
+
+def _current_observation(env: HighLevelOptionEnv, info: dict[str, Any] | None = None) -> dict[str, float]:
+    raw_closing_speed = float(info["closing_speed"]) if info and "closing_speed" in info else _estimated_closing_speed(env)
+    return env.inner.inner._observation(raw_closing_speed)
+
+
+def _vertical_target_metric(phase_type: str, obs: dict[str, float]) -> float:
     threshold = PHASE_SUCCESS_THRESHOLDS.get(phase_type, {})
     if "separation_low" not in threshold:
         return 0.0
     separation = abs(obs["dz"])
-    is_controlled = (
+    controlled = (
         threshold["separation_low"] <= separation <= threshold["separation_high"]
         and abs(obs["threat_up"]) <= threshold["threat_up_safe"]
         and obs["boundary_margin_z"] >= threshold["z_margin_safe"]
     )
-    return float(is_controlled)
+    return float(controlled)
+
+
+def _improvement_metrics(phase_type: str, start: dict[str, float], final: dict[str, float]) -> dict[str, float]:
+    distance_gain = final["distance"] - start["distance"]
+    closing_speed_reduction = start["closing_speed"] - final["closing_speed"]
+    threat_right_reduction = abs(start["threat_right"]) - abs(final["threat_right"])
+    boundary_margin_change = final["min_boundary_margin"] - start["min_boundary_margin"]
+    target_band = _vertical_target_metric(phase_type, final)
+    threat_up_reduction = abs(start["threat_up"]) - abs(final["threat_up"])
+    z_margin_change = final["boundary_margin_z"] - start["boundary_margin_z"]
+
+    # Scores normalize short-window changes by the existing sequential criteria.
+    # They rank options for diagnostics only; they never feed training rewards.
+    rear_score = distance_gain / 0.025 + closing_speed_reduction / 0.08
+    lateral_score = threat_right_reduction / 0.20 + distance_gain / 0.02
+    boundary_score = boundary_margin_change / 0.07
+    vertical_score = target_band + threat_up_reduction / 0.20 + z_margin_change / 0.10
+    combined_score = 0.5 * rear_score + 0.5 * vertical_score
+    score_by_phase = {
+        "rear": rear_score,
+        "flank": lateral_score,
+        "boundary": boundary_score,
+        "vertical": vertical_score,
+        "rear_vertical": combined_score,
+    }
+    return {
+        "distance_gain": distance_gain,
+        "closing_speed_reduction": closing_speed_reduction,
+        "rear_pressure_improvement_score": rear_score,
+        "threat_right_abs_reduction": threat_right_reduction,
+        "lateral_threat_improvement_score": lateral_score,
+        "min_boundary_margin_change": boundary_margin_change,
+        "boundary_recovery_improvement_score": boundary_score,
+        "vertical_target_band_rate": target_band,
+        "threat_up_abs_reduction": threat_up_reduction,
+        "z_margin_change": z_margin_change,
+        "vertical_improvement_score": vertical_score,
+        "rear_vertical_combined_score": combined_score,
+        "improvement_score": score_by_phase[phase_type],
+    }
 
 
 def evaluate_phase_option(
@@ -99,19 +181,18 @@ def evaluate_phase_option(
     phase_type: str,
     option_index: int,
     episodes: int,
+    eval_mode: str,
 ) -> dict[str, Any]:
+    if eval_mode not in EVAL_MODES:
+        raise ValueError(f"Unsupported eval mode: {eval_mode}")
     successes = captures = out_of_bounds = timeouts = 0
     completion_steps: list[int] = []
     rewards: list[float] = []
-    distance_gains: list[float] = []
-    boundary_margin_changes: list[float] = []
-    threat_right_reductions: list[float] = []
-    vertical_metrics: list[float] = []
-    closing_speed_reductions: list[float] = []
+    metric_samples: list[dict[str, float]] = []
 
     for _ in range(episodes):
         _reset_standalone_phase(env, phase_type)
-        start = env.inner.inner._observation(closing_speed=0.0)
+        start = _current_observation(env)
         total_reward = 0.0
         lowlevel_steps = 0
         info: dict[str, Any] = {"outcome": "running"}
@@ -120,11 +201,11 @@ def evaluate_phase_option(
             _, reward, terminated, truncated, info = env.step(option_index)
             total_reward += float(reward)
             lowlevel_steps += int(info.get("option_duration_used", 0))
-            if terminated or truncated:
+            if eval_mode == "one_shot" or terminated or truncated:
                 break
 
-        final = env.inner.inner._observation(float(info.get("closing_speed", 0.0)))
-        outcome = str(info.get("outcome", "timeout"))
+        final = _current_observation(env, info)
+        outcome = str(info.get("outcome", "running"))
         success = bool(info.get("completed_phases", 0) == 1 and outcome == "escaped")
         successes += int(success)
         captures += int(outcome == "captured")
@@ -133,86 +214,87 @@ def evaluate_phase_option(
         if success:
             completion_steps.append(lowlevel_steps)
 
+        metrics = _improvement_metrics(phase_type, start, final)
+        if outcome == "out_of_bounds":
+            metrics["improvement_score"] -= 2.0
+        metric_samples.append(metrics)
         rewards.append(total_reward)
-        distance_gains.append(final["distance"] - start["distance"])
-        boundary_margin_changes.append(final["min_boundary_margin"] - start["min_boundary_margin"])
-        threat_right_reductions.append(abs(start["threat_right"]) - abs(final["threat_right"]))
-        vertical_metrics.append(_vertical_metric(phase_type, final))
-        closing_speed_reductions.append(start["closing_speed"] - final["closing_speed"])
 
+    averaged_metrics = {key: mean(sample[key] for sample in metric_samples) for key in metric_samples[0]}
+    success_rate = successes / episodes
     return {
+        "eval_mode": eval_mode,
         "phase_type": phase_type,
         "option": OPTION_NAMES[option_index],
         "expected_option": "/".join(EXPECTED_OPTIONS[phase_type]),
         "episodes": episodes,
         "option_duration": env.option_duration,
-        "phase_success_rate": successes / episodes,
+        "phase_success_rate": success_rate,
+        "one_shot_success_rate": success_rate if eval_mode == "one_shot" else "",
+        "sustained_success_rate": success_rate if eval_mode == "sustained" else "",
+        **averaged_metrics,
         "capture_rate": captures / episodes,
         "out_of_bounds_rate": out_of_bounds / episodes,
         "timeout_rate": timeouts / episodes,
-        "avg_completion_step": mean(completion_steps) if completion_steps else 0.0,
         "avg_reward": mean(rewards),
-        "avg_distance_gain": mean(distance_gains),
-        "avg_boundary_margin_change": mean(boundary_margin_changes),
-        "avg_threat_right_abs_reduction": mean(threat_right_reductions),
-        "avg_vertical_metric": mean(vertical_metrics),
-        "avg_closing_speed_reduction": mean(closing_speed_reductions),
+        "avg_completion_step": mean(completion_steps) if completion_steps else 0.0,
     }
 
 
-def print_diagnostics(rows: list[dict[str, Any]], phases: list[str]) -> None:
+def print_diagnostics(rows: list[dict[str, Any]], phases: list[str], eval_mode: str) -> None:
     by_phase = {phase: [row for row in rows if row["phase_type"] == phase] for phase in phases}
-    print("\n=== Phase × Option Success Matrix ===")
+    print(f"\n=== Phase × Option Improvement Matrix ({eval_mode}) ===")
+    for phase in phases:
+        scores = {str(row["option"]): float(row["improvement_score"]) for row in by_phase[phase]}
+        print(f"{phase} -> " + ", ".join(f"{option}:{scores[option]:+.3f}" for option in OPTION_NAMES))
+
+    print(f"\n=== Phase × Option Success Matrix ({eval_mode}) ===")
     for phase in phases:
         scores = {str(row["option"]): float(row["phase_success_rate"]) for row in by_phase[phase]}
         print(f"{phase} -> " + ", ".join(f"{option}:{scores[option]:.3f}" for option in OPTION_NAMES))
 
-    print("\n=== Per-phase Discriminability ===")
+    print(f"\n=== Per-phase Discriminability by Improvement Score ({eval_mode}) ===")
     top_options: list[str] = []
     expected_scores: list[float] = []
     wrong_scores: list[float] = []
     ambiguous_phases: list[str] = []
     for phase in phases:
-        scores = {str(row["option"]): float(row["phase_success_rate"]) for row in by_phase[phase]}
+        scores = {str(row["option"]): float(row["improvement_score"]) for row in by_phase[phase]}
         best_score = max(scores.values())
         best_options = [option for option in OPTION_NAMES if scores[option] == best_score]
-        best_option = "/".join(best_options)
         top_options.extend(best_options)
         expected = EXPECTED_OPTIONS[phase]
         expected_score = max(scores[option] for option in expected)
         best_wrong_score = max(scores[option] for option in OPTION_NAMES if option not in expected)
         expected_rank = 1 + sum(score > expected_score for score in scores.values())
         margin = expected_score - best_wrong_score
-        warning = ""
-        if expected_score < best_score:
-            warning = " WARNING: expected option is not top-1"
+        warning = " WARNING: expected option is not top-1" if expected_score < best_score else ""
         if best_score - min(scores.values()) <= 0.10:
             ambiguous_phases.append(phase)
         expected_scores.append(expected_score)
         wrong_scores.append(best_wrong_score)
         print(
-            f"{phase}: best_option={best_option}, expected_option={'/'.join(expected)}, "
+            f"{phase}: best_option_by_score={'/'.join(best_options)}, expected_option={'/'.join(expected)}, "
             f"expected_option_rank={expected_rank}, expected_minus_second={margin:+.3f}{warning}"
         )
 
     top_counts = Counter(top_options)
     collapse = [option for option, count in top_counts.items() if count > len(phases) / 2]
-    collapse_warning = (
-        "none" if not collapse else f"possible generic option collapse: {', '.join(sorted(collapse))} top-1 in most phases"
-    )
+    collapse_warning = "none" if not collapse else f"possible generic option collapse: {', '.join(sorted(collapse))} top-1 in most phases"
     ambiguity_warning = "none" if not ambiguous_phases else f"ambiguous phases: {', '.join(ambiguous_phases)}"
-    print("\n=== Overall Discriminability ===")
-    print(f"mean_expected_option_success={mean(expected_scores):.3f}")
-    print(f"mean_best_wrong_option_success={mean(wrong_scores):.3f}")
+    print(f"\n=== Overall Discriminability by Improvement Score ({eval_mode}) ===")
+    print(f"mean_expected_option_improvement_score={mean(expected_scores):+.3f}")
+    print(f"mean_best_wrong_option_improvement_score={mean(wrong_scores):+.3f}")
     print(f"option_collapse_warning={collapse_warning}")
     print(f"phase_ambiguity_warning={ambiguity_warning}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate phase × option discriminability without training PPO")
+    parser = argparse.ArgumentParser(description="Evaluate one-shot and sustained phase × option discriminability without training PPO")
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--phase-types", default="all", help="Comma-separated rear,flank,boundary,vertical,rear_vertical or all")
     parser.add_argument("--option-duration", type=int, default=8)
+    parser.add_argument("--eval-mode", choices=["one_shot", "sustained", "both"], default="one_shot")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
     parser.add_argument("--out-dir", default="outputs/evaluation")
     args = parser.parse_args()
@@ -238,11 +320,15 @@ def main() -> None:
 
     models = [SAC.load(str(path)) for path in model_paths]
     env = HighLevelOptionEnv(low_models=models, option_duration=args.option_duration, scenario_set="sequential")
-    rows = [
-        evaluate_phase_option(env, phase_type, option_index, args.episodes)
-        for phase_type in phases
-        for option_index in range(len(OPTION_NAMES))
-    ]
+    rows: list[dict[str, Any]] = []
+    for eval_mode in expand_eval_modes(args.eval_mode):
+        mode_rows = [
+            evaluate_phase_option(env, phase_type, option_index, args.episodes, eval_mode)
+            for phase_type in phases
+            for option_index in range(len(OPTION_NAMES))
+        ]
+        rows.extend(mode_rows)
+        print_diagnostics(mode_rows, phases, eval_mode)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -251,8 +337,6 @@ def main() -> None:
         writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
-
-    print_diagnostics(rows, phases)
     print(f"\nSaved CSV: {output_path}")
 
 

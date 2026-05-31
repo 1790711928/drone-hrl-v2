@@ -8,7 +8,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from src.env.dynamics import Agent3DState, Env3DState, relative_distance
+from src.env.dynamics import Agent3DState, Env3DState
 from src.env.termination import TerminationState
 from src.training.sac_env import PursuitEscapeGymEnv
 
@@ -116,10 +116,21 @@ def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState
     return Env3DState(evader=ev, pursuer=pu, step_count=0)
 
 
+PHASE_SUCCESS_THRESHOLDS: dict[str, dict[str, float]] = {
+    "rear": {"distance_gain": 0.025, "closing_speed_max": 0.08},
+    "flank": {"threat_right_reduction": 0.20, "threat_right_safe": 0.40, "distance_loss_max": 0.02},
+    "boundary": {"margin_gain": 0.07, "controllable_margin": 0.25},
+    "vertical": {"separation_low": 0.12, "separation_high": 0.30, "threat_up_safe": 0.75, "z_margin_safe": 0.20},
+    "rear_vertical": {"distance_gain": 0.020, "closing_speed_max": 0.08, "separation_low": 0.12, "separation_high": 0.30, "threat_up_safe": 0.75, "z_margin_safe": 0.20},
+}
+
+
 class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
     metadata = {"render_modes": []}
     phase_completion_bonus = 5.0
     final_sequence_bonus = 20.0
+    phase_success_streak_required = 3
+    max_phase_lowlevel_steps = 80
 
     def __init__(
         self,
@@ -147,6 +158,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.phase_index = 0
         self.completed_phases = 0
         self.phase_names: tuple[str, ...] = ()
+        self.phase_start_metrics: dict[str, float] = {}
+        self.phase_success_streak = 0
+        self.phase_lowlevel_steps = 0
+        self.phase_failed = False
+        self.phase_success_by_type: dict[str, int] = {}
+        self.phase_failure_by_type: dict[str, int] = {}
 
     def _sample_basic(self) -> str:
         return str(self.np_random.choice(BASIC_SCENARIOS))
@@ -172,21 +189,48 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         if evader is None:
             evader = SEQUENTIAL_SCENARIOS[self.current_scenario_name].evader
         state = inject_sequential_phase(evader, self.phase_names[self.phase_index])
-        return self._set_inner_state(state)
+        obs = self._set_inner_state(state)
+        self._reset_phase_tracking()
+        return obs
 
-    def _phase_complete(self, obs_dict: dict[str, float], outcome: str) -> bool:
-        if outcome == "escaped":
-            return True
+    def _reset_phase_tracking(self) -> None:
+        state = self.inner.inner.state
+        assert state is not None
+        obs = self.inner.inner._observation(closing_speed=0.0)
+        self.phase_start_metrics = {
+            "distance": obs["distance"],
+            "threat_right_abs": abs(obs["threat_right"]),
+            "vertical_separation": abs(obs["dz"]),
+            "min_boundary_margin": obs["min_boundary_margin"],
+        }
+        self.phase_success_streak = 0
+        self.phase_lowlevel_steps = 0
+        self.phase_failed = False
+
+    def _phase_condition(self, obs: dict[str, float]) -> bool:
         phase = self.phase_names[self.phase_index]
+        threshold = PHASE_SUCCESS_THRESHOLDS[phase]
+        distance_gain = obs["distance"] - self.phase_start_metrics["distance"]
+        vertical_sep = abs(obs["dz"])
+        vertical_ok = (
+            threshold.get("separation_low", 0.0) <= vertical_sep <= threshold.get("separation_high", 1.0)
+            and abs(obs["threat_up"]) <= threshold.get("threat_up_safe", 1.0)
+            and obs["boundary_margin_z"] >= threshold.get("z_margin_safe", 0.0)
+        )
         if phase == "rear":
-            return obs_dict["distance"] >= 0.12 or obs_dict["threat_forward"] >= -0.25
+            return distance_gain >= threshold["distance_gain"] and obs["closing_speed"] <= threshold["closing_speed_max"]
         if phase == "flank":
-            return abs(obs_dict["threat_right"]) <= 0.35
+            reduction = self.phase_start_metrics["threat_right_abs"] - abs(obs["threat_right"])
+            return (reduction >= threshold["threat_right_reduction"] or abs(obs["threat_right"]) <= threshold["threat_right_safe"]) and distance_gain >= -threshold["distance_loss_max"]
         if phase == "boundary":
-            return obs_dict["min_boundary_margin"] >= 0.25
+            margin_gain = obs["min_boundary_margin"] - self.phase_start_metrics["min_boundary_margin"]
+            return obs["min_boundary_margin"] >= threshold["controllable_margin"] and margin_gain >= threshold["margin_gain"]
         if phase == "vertical":
-            return abs(obs_dict["threat_up"]) <= 0.40
-        return obs_dict["distance"] >= 0.12 or abs(obs_dict["threat_up"]) <= 0.45
+            return vertical_ok
+        return distance_gain >= threshold["distance_gain"] and obs["closing_speed"] <= threshold["closing_speed_max"] and vertical_ok
+
+    def _increment_phase_stat(self, stats: dict[str, int], phase: str) -> None:
+        stats[phase] = stats.get(phase, 0) + 1
 
     def _phase_info(self) -> dict[str, Any]:
         total = len(self.phase_names)
@@ -196,6 +240,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "completed_phases": self.completed_phases,
             "total_phases": total,
             "phase_completion_rate": self.completed_phases / max(total, 1),
+            "phase_success": False,
+            "phase_failed": self.phase_failed,
+            "phase_success_streak": self.phase_success_streak,
+            "phase_lowlevel_steps": self.phase_lowlevel_steps,
+            "phase_success_by_phase_type": dict(self.phase_success_by_type),
+            "phase_failure_by_phase_type": dict(self.phase_failure_by_type),
         }
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
@@ -206,6 +256,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.phase_index = 0
         self.completed_phases = 0
         self.phase_names = ()
+        self.phase_start_metrics = {}
+        self.phase_success_streak = 0
+        self.phase_lowlevel_steps = 0
+        self.phase_failed = False
+        self.phase_success_by_type = {}
+        self.phase_failure_by_type = {}
 
         if options and "scenario_set" in options:
             self.scenario_set = str(options["scenario_set"])
@@ -259,15 +315,30 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             outcome = str(info.get("outcome", "running"))
             if outcome in {"captured", "out_of_bounds"}:
                 terminated = True
+                self.phase_failed = True
+                self._increment_phase_stat(self.phase_failure_by_type, self.phase_names[self.phase_index])
                 break
             if low_truncated:
                 truncated = True
+                self.phase_failed = True
+                self._increment_phase_stat(self.phase_failure_by_type, self.phase_names[self.phase_index])
                 break
+            if outcome == "escaped":
+                # Base escape does not solve a sequential phase. Remove the low-level
+                # terminal bonus and keep evaluating the phase-specific objective.
+                total_reward -= 50.0
+                self.inner.inner.tstate = TerminationState()
 
+            self.phase_lowlevel_steps += 1
             obs_dict = self.inner.inner._observation(float(info.get("closing_speed", 0.0)))
-            if self._phase_complete(obs_dict, outcome):
-                if outcome == "escaped":
-                    total_reward -= 50.0  # Intermediate escape is a phase event, not global success.
+            if self._phase_condition(obs_dict):
+                self.phase_success_streak += 1
+            else:
+                self.phase_success_streak = 0
+
+            if self.phase_success_streak >= self.phase_success_streak_required:
+                phase = self.phase_names[self.phase_index]
+                self._increment_phase_stat(self.phase_success_by_type, phase)
                 total_reward += self.phase_completion_bonus
                 self.completed_phases += 1
                 self.phase_index += 1
@@ -282,6 +353,14 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                     assert state is not None
                     obs = self._inject_current_phase(state.evader)
                     info = {"outcome": "running"}
+                break
+
+            if self.phase_lowlevel_steps >= self.max_phase_lowlevel_steps:
+                truncated = True
+                self.phase_failed = True
+                self._increment_phase_stat(self.phase_failure_by_type, self.phase_names[self.phase_index])
+                info = dict(info)
+                info["outcome"] = "timeout"
                 break
 
         if self.prev_option is not None and idx != self.prev_option:
@@ -305,6 +384,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 "scenario_set": self.scenario_set,
                 "phase_transition": phase_transition,
                 **self._phase_info(),
+                "phase_success": phase_transition,
             }
         )
         return obs, float(total_reward), bool(terminated), bool(truncated), info

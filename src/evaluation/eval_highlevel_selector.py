@@ -117,6 +117,8 @@ def main() -> None:
     scenario_sequences: dict[str, Counter[str]] = {}
     completed_phases_total = 0.0
     total_phases_total = 0.0
+    phase_success_by_type: dict[str, int] = {}
+    phase_failure_by_type: dict[str, int] = {}
 
     for _ in range(args.episodes):
         obs, info = env.reset(options={"scenario_set": args.scenario_set})
@@ -181,6 +183,10 @@ def main() -> None:
         scenario_switch_counts[scen].append(sc)
         completed_phases_total += float(info.get("completed_phases", 0))
         total_phases_total += float(info.get("total_phases", 0))
+        for phase, count in dict(info.get("phase_success_by_phase_type", {})).items():
+            phase_success_by_type[str(phase)] = phase_success_by_type.get(str(phase), 0) + int(count)
+        for phase, count in dict(info.get("phase_failure_by_phase_type", {})).items():
+            phase_failure_by_type[str(phase)] = phase_failure_by_type.get(str(phase), 0) + int(count)
 
         seq_key = "->".join(f"pi{a+1}" for a in seq[:6])
         scenario_sequences[scen][seq_key] += 1
@@ -232,6 +238,8 @@ def main() -> None:
     print(f"common_option_sequences_by_scenario={common_seq_by_scenario}")
     print(f"phase_completion_rate={completed_phases_total / max(total_phases_total, 1.0):.3f}")
     print(f"avg_completed_phases={completed_phases_total / n:.3f}")
+    print(f"phase_success_by_phase_type={phase_success_by_type}")
+    print(f"phase_failure_by_phase_type={phase_failure_by_type}")
 
 
 if __name__ == "__main__":

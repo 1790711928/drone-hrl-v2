@@ -274,7 +274,7 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 
 `--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）、`sequential`（单个 episode 内按阶段注入 rear/flank/boundary/vertical 威胁）。
 
-`sequential` 用于验证真正的 option 切换：中间阶段达成 escape 仅视为当前 phase 完成，环境会注入下一阶段威胁；只有所有 phase 完成后才算最终 escaped。phase 名称仅写入 `info`，不会加入 observation。
+`sequential` 用于验证真正的 option 切换：基础环境的中间 escape 不会自动完成 phase。每个 rear/flank/boundary/vertical phase 必须连续满足专属 geometry 条件后，环境才会注入下一阶段威胁；只有所有 phase 完成后才算最终 escaped。phase 名称、成功 streak 与失败统计仅写入 `info`，不会加入 observation。
 
 ### 6.8 冻结低层后训练上层 PPO 切换器
 ```powershell

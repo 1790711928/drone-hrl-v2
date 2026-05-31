@@ -75,6 +75,8 @@ def main() -> None:
                 success = captures = out_of_bounds = 0
                 rewards = steps = completed_phases = 0.0
                 total_phases = 0.0
+                phase_success_by_type: dict[str, int] = {}
+                phase_failure_by_type: dict[str, int] = {}
 
                 for _ in range(args.episodes):
                     obs, _ = env.reset(options={"scenario_set": args.scenario_set, "scenario_name": scenario_name})
@@ -94,6 +96,10 @@ def main() -> None:
                     steps += ep_steps
                     completed_phases += float(info.get("completed_phases", 0))
                     total_phases += float(info.get("total_phases", 0))
+                    for phase, count in dict(info.get("phase_success_by_phase_type", {})).items():
+                        phase_success_by_type[str(phase)] = phase_success_by_type.get(str(phase), 0) + int(count)
+                    for phase, count in dict(info.get("phase_failure_by_phase_type", {})).items():
+                        phase_failure_by_type[str(phase)] = phase_failure_by_type.get(str(phase), 0) + int(count)
                     if outcome == "escaped":
                         success += 1
                     elif outcome == "captured":
@@ -115,6 +121,8 @@ def main() -> None:
                     "avg_steps": steps / episodes,
                     "phase_completion_rate": completed_phases / max(total_phases, 1.0),
                     "avg_completed_phases": completed_phases / episodes,
+                    "phase_success_by_phase_type": str(phase_success_by_type),
+                    "phase_failure_by_phase_type": str(phase_failure_by_type),
                 }
                 rows.append(row)
                 current_best = best_by_scenario.get(scenario_name)

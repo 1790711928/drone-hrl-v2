@@ -9,6 +9,7 @@ from src.training.highlevel_env import (
     COMPOSITE_SCENARIOS,
     MIXED_SCENARIOS,
     SEQUENTIAL_SCENARIOS,
+    PHASE_SUCCESS_THRESHOLDS,
     inject_sequential_phase,
 )
 
@@ -52,6 +53,7 @@ def main() -> None:
         print(f"\n[{name}] phases={list(spec.phases)}")
         evader = spec.evader
         for index, phase in enumerate(spec.phases):
+            print(f"  target phase[{index}]={phase}: thresholds={PHASE_SUCCESS_THRESHOLDS[phase]}")
             env.state = inject_sequential_phase(evader, phase)
             print_obs_line(f"phase[{index}]={phase}", env._observation(closing_speed=0.0))
             evader = env.state.evader

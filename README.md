@@ -276,6 +276,13 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 
 `sequential` 用于验证真正的 option 切换：基础环境的中间 escape 不会自动完成 phase。每个 rear/flank/boundary/vertical phase 必须连续满足专属 geometry 条件后，环境才会注入下一阶段威胁；只有所有 phase 完成后才算最终 escaped。phase 名称、成功 streak 与失败统计仅写入 `info`，不会加入 observation。
 
+在训练高层 PPO 前，建议运行 phase × option 区分度诊断：
+```powershell
+python -m src.evaluation.eval_phase_option_discriminability --episodes 10 --phase-types all --option-duration 8
+```
+
+`eval_phase_option_discriminability.py` 会使用现有 phase 注入函数和 phase-specific 成功条件，输出 rear/flank/boundary/vertical/rear_vertical × pi1/pi2/pi3/pi4 成功率矩阵。如果矩阵显示某个 option 通吃多数 phase，或某个 phase 下所有 option 表现接近，则当前 sequential benchmark 缺少 option 区分度，不应直接开始训练 PPO。
+
 ### 6.8 冻结低层后训练上层 PPO 切换器
 ```powershell
 python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip

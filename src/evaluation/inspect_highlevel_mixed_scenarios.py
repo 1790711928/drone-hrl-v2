@@ -4,7 +4,13 @@ import argparse
 
 from src.env.dynamics import Env3DState
 from src.env.pursuit_escape_env import PursuitEscapeEnv
-from src.training.highlevel_env import BASIC_SCENARIOS, COMPOSITE_SCENARIOS, MIXED_SCENARIOS
+from src.training.highlevel_env import (
+    BASIC_SCENARIOS,
+    COMPOSITE_SCENARIOS,
+    MIXED_SCENARIOS,
+    SEQUENTIAL_SCENARIOS,
+    inject_sequential_phase,
+)
 
 
 def print_obs_line(name: str, obs: dict[str, float]) -> None:
@@ -18,7 +24,7 @@ def print_obs_line(name: str, obs: dict[str, float]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect high-level scenario geometry")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential"], default="composite")
     args = parser.parse_args()
 
     env = PursuitEscapeEnv()
@@ -26,22 +32,29 @@ def main() -> None:
 
     if args.scenario_set == "basic":
         for name in BASIC_SCENARIOS:
-            obs = env.reset(scenario=name, randomize=False)
-            print_obs_line(name, obs)
+            print_obs_line(name, env.reset(scenario=name, randomize=False))
         return
 
     if args.scenario_set == "mixed":
         for mixed_name, mix in MIXED_SCENARIOS.items():
             print(f"\n[{mixed_name}] composition={mix}")
             for base in mix.keys():
-                obs = env.reset(scenario=base, randomize=False)
-                print_obs_line(base, obs)
+                print_obs_line(base, env.reset(scenario=base, randomize=False))
         return
 
-    for name, (ev, pu) in COMPOSITE_SCENARIOS.items():
-        env.state = Env3DState(evader=ev, pursuer=pu, step_count=0)
-        obs = env._observation(closing_speed=0.0)
-        print_obs_line(name, obs)
+    if args.scenario_set == "composite":
+        for name, (ev, pu) in COMPOSITE_SCENARIOS.items():
+            env.state = Env3DState(evader=ev, pursuer=pu, step_count=0)
+            print_obs_line(name, env._observation(closing_speed=0.0))
+        return
+
+    for name, spec in SEQUENTIAL_SCENARIOS.items():
+        print(f"\n[{name}] phases={list(spec.phases)}")
+        evader = spec.evader
+        for index, phase in enumerate(spec.phases):
+            env.state = inject_sequential_phase(evader, phase)
+            print_obs_line(f"phase[{index}]={phase}", env._observation(closing_speed=0.0))
+            evader = env.state.evader
 
 
 if __name__ == "__main__":

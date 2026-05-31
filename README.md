@@ -260,6 +260,9 @@ python -m src.evaluation.eval_boundary_skill_diagnostics --episodes 30 --skill-h
 python -m src.evaluation.inspect_highlevel_mixed_scenarios --scenario-set composite
 python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 0 --episodes 20 --scenario-set composite
 python -m src.evaluation.eval_highlevel_selector --mode random --episodes 20 --scenario-set composite
+python -m src.evaluation.inspect_highlevel_mixed_scenarios --scenario-set sequential
+python -m src.evaluation.eval_highlevel_selector --mode random --episodes 20 --scenario-set sequential
+python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set sequential --max-seq-len 2 --option-durations 4,6
 ```
 
 项目评估分三层：
@@ -269,9 +272,11 @@ python -m src.evaluation.eval_highlevel_selector --mode random --episodes 20 --s
 
 高层 PPO 目标不是识别 S1/S2/S3/S4 标签，而是在复合威胁中学习 option 选择与切换。
 
-`--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）。
+`--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）、`sequential`（单个 episode 内按阶段注入 rear/flank/boundary/vertical 威胁）。
 
-### 6.7 冻结低层后训练上层 PPO 切换器
+`sequential` 用于验证真正的 option 切换：中间阶段达成 escape 仅视为当前 phase 完成，环境会注入下一阶段威胁；只有所有 phase 完成后才算最终 escaped。phase 名称仅写入 `info`，不会加入 observation。
+
+### 6.8 冻结低层后训练上层 PPO 切换器
 ```powershell
 python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip
 ```

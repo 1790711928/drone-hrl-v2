@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential"], default="composite")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
@@ -74,10 +74,7 @@ def main() -> None:
     parser.add_argument("--rear-distance-threshold", type=float, default=0.09)
     args = parser.parse_args()
 
-    try:
-        from stable_baselines3 import PPO, SAC
-    except Exception as exc:
-        raise RuntimeError("stable-baselines3 is required. Install with: pip install stable-baselines3 gymnasium") from exc
+    from stable_baselines3 import PPO, SAC
 
     ckpt_dir = Path(args.checkpoint_dir)
     low_paths = [
@@ -118,6 +115,8 @@ def main() -> None:
     scenario_switch_counts: dict[str, list[float]] = {}
     scenario_first_options: dict[str, list[int]] = {}
     scenario_sequences: dict[str, Counter[str]] = {}
+    completed_phases_total = 0.0
+    total_phases_total = 0.0
 
     for _ in range(args.episodes):
         obs, info = env.reset(options={"scenario_set": args.scenario_set})
@@ -180,6 +179,8 @@ def main() -> None:
         sc = float(info.get("switch_count", 0))
         total_switch += sc
         scenario_switch_counts[scen].append(sc)
+        completed_phases_total += float(info.get("completed_phases", 0))
+        total_phases_total += float(info.get("total_phases", 0))
 
         seq_key = "->".join(f"pi{a+1}" for a in seq[:6])
         scenario_sequences[scen][seq_key] += 1
@@ -229,6 +230,8 @@ def main() -> None:
     print(f"avg_switch_count_by_scenario={avg_switch_by_scenario}")
     print(f"first_option_by_scenario={first_option_by_scenario}")
     print(f"common_option_sequences_by_scenario={common_seq_by_scenario}")
+    print(f"phase_completion_rate={completed_phases_total / max(total_phases_total, 1.0):.3f}")
+    print(f"avg_completed_phases={completed_phases_total / n:.3f}")
 
 
 if __name__ == "__main__":

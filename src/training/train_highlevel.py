@@ -20,16 +20,11 @@ def main() -> None:
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential"], default="composite")
     args = parser.parse_args()
 
-    try:
-        from stable_baselines3 import PPO, SAC
-        from stable_baselines3.common.vec_env import DummyVecEnv
-    except Exception as exc:
-        raise RuntimeError(
-            "stable-baselines3 is required. Install with: pip install stable-baselines3 gymnasium"
-        ) from exc
+    from stable_baselines3 import PPO, SAC
+    from stable_baselines3.common.vec_env import DummyVecEnv
 
     from src.training.highlevel_env import HighLevelOptionEnv
 

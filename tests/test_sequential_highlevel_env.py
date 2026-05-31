@@ -23,7 +23,7 @@ def test_sequential_phase_injection_exposes_distinct_geometry() -> None:
     boundary_obs = env.inner.inner._observation(0.0)
 
     assert rear_obs["threat_forward"] <= -0.95
-    assert abs(flank_obs["threat_right"]) >= 0.90
+    assert abs(flank_obs["threat_right"]) >= 0.70
     assert boundary_obs["min_boundary_margin"] <= 0.20
 
 

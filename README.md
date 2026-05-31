@@ -283,6 +283,15 @@ python -m src.evaluation.eval_phase_option_discriminability --episodes 10 --phas
 
 `eval_phase_option_discriminability.py` 会使用现有 phase 注入函数和 phase-specific 成功条件，输出 rear/flank/boundary/vertical/rear_vertical × pi1/pi2/pi3/pi4 矩阵。`--eval-mode one_shot` 只执行一次 option 窗口，用于判断当前 phase 下哪个 option 的短期改善效果最好；`--eval-mode sustained` 会重复执行同一个 option 直到成功、失败或超时，用于判断该 option 最终能否独立解决 phase；`--eval-mode both` 会同时输出两类结果。训练 PPO 前应优先查看 one-shot improvement matrix，而不是仅看 sustained success matrix。如果某个 option 在多数 phase 的短窗口改善分数都是 top-1，或某个 phase 下所有 option 分数接近，则当前 sequential benchmark 缺少 option 区分度，不应直接开始训练 PPO。
 
+如需判断异常来自底层策略还是 high-level phase 注入分布偏移，请运行：
+```powershell
+python -m src.evaluation.eval_phase_canonical_alignment --episodes 5 --option-duration 4
+```
+
+`eval_phase_canonical_alignment.py` 会先打印 canonical 低层主场景与 injected high-level phase 的初始 geometry，再在 checkpoint 可用时对同一组 option 输出 one-shot improvement matrix 和 `alignment_gap`。`rear_vertical` 是复合 phase，没有单一 canonical 低层场景，因此只打印 injected geometry。
+
+基础 sequential phase（rear/flank/boundary/vertical）的注入 geometry 由四个 canonical 低层主场景派生，避免高层调用分布与底层训练分布维护两套手写参数。`rear_vertical` 仍是显式复合 phase。
+
 ### 6.8 冻结低层后训练上层 PPO 切换器
 ```powershell
 python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip

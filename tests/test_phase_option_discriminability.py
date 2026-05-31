@@ -44,3 +44,23 @@ def test_sustained_repeats_option_windows_until_terminal_result():
     assert models[0].predict_calls > 2
     assert row["eval_mode"] == "sustained"
     assert row["one_shot_success_rate"] == ""
+
+
+def test_flank_score_is_driven_by_lateral_reduction_not_distance_gain():
+    from src.evaluation.eval_phase_option_discriminability import _improvement_metrics
+
+    start = {"distance": 0.10, "closing_speed": 0.10, "threat_forward": -0.5, "threat_right": 0.8, "min_boundary_margin": 0.3, "dz": 0.2, "boundary_margin_z": 0.3, "threat_up": 0.0}
+    lateral = dict(start, threat_right=0.4)
+    distance_only = dict(start, distance=0.30)
+    assert _improvement_metrics("flank", start, lateral)["improvement_score"] > _improvement_metrics("flank", start, distance_only)["improvement_score"]
+
+
+def test_canonical_and_injected_geometry_can_be_reset_without_models():
+    from src.evaluation.eval_phase_canonical_alignment import geometry_row
+
+    env = HighLevelOptionEnv([None] * 4, option_duration=2, scenario_set="sequential")
+    canonical = geometry_row(env, "flank", "canonical")
+    injected = geometry_row(env, "flank", "injected")
+    assert canonical["canonical_scenario"] == "flank_threat"
+    assert abs(canonical["threat_right"] - injected["threat_right"]) < 1e-9
+    assert abs(canonical["threat_forward"] - injected["threat_forward"]) < 1e-9

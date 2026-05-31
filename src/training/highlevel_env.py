@@ -9,6 +9,7 @@ import numpy as np
 from gymnasium import spaces
 
 from src.env.dynamics import Agent3DState, Env3DState
+from src.env.scenarios import SCENARIOS
 from src.env.termination import TerminationState
 from src.training.sac_env import PursuitEscapeGymEnv
 
@@ -86,32 +87,63 @@ SEQUENTIAL_SCENARIOS: dict[str, SequentialScenario] = {
 }
 
 
+PHASE_CANONICAL_SCENARIOS = {
+    "rear": "rear_close_threat",
+    "flank": "flank_threat",
+    "boundary": "boundary_constrained",
+    "vertical": "vertical_z_threat",
+}
+
+
+def _body_axes(agent: Agent3DState) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    forward = (math.cos(agent.pitch) * math.cos(agent.yaw), math.cos(agent.pitch) * math.sin(agent.yaw), math.sin(agent.pitch))
+    right = (-math.sin(agent.yaw), math.cos(agent.yaw), 0.0)
+    up = (-math.sin(agent.pitch) * math.cos(agent.yaw), -math.sin(agent.pitch) * math.sin(agent.yaw), math.cos(agent.pitch))
+    return forward, right, up
+
+
+def _dot(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    return sum(left[index] * right[index] for index in range(3))
+
+
+def _canonical_local_offset(phase_name: str) -> tuple[float, float, float]:
+    scenario = SCENARIOS[PHASE_CANONICAL_SCENARIOS[phase_name]]
+    rel = (
+        scenario.pursuer.x - scenario.evader.x,
+        scenario.pursuer.y - scenario.evader.y,
+        scenario.pursuer.z - scenario.evader.z,
+    )
+    return tuple(_dot(rel, axis) for axis in _body_axes(scenario.evader))
+
+
 def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState:
-    """Create a phase-specific threat while preserving the evader's dynamic state."""
+    """Inject canonical low-level threat geometry while preserving sequential state where possible."""
     ev = evader
     if phase_name == "boundary":
-        # Give pi3 a recoverable positive-x boundary state, not an immediate OOB.
-        ev = replace(evader, x=42.0, z=max(15.0, min(35.0, evader.z)), yaw=3.0, pitch=max(-0.08, min(0.08, evader.pitch)))
+        # Boundary recovery must match the canonical pi3 training distribution.
+        canonical_evader = SCENARIOS[PHASE_CANONICAL_SCENARIOS[phase_name]].evader
+        ev = replace(evader, x=canonical_evader.x, z=canonical_evader.z, yaw=canonical_evader.yaw, pitch=canonical_evader.pitch)
 
-    forward = (math.cos(ev.pitch) * math.cos(ev.yaw), math.cos(ev.pitch) * math.sin(ev.yaw), math.sin(ev.pitch))
-    right = (-math.sin(ev.yaw), math.cos(ev.yaw), 0.0)
-    up = (-math.sin(ev.pitch) * math.cos(ev.yaw), -math.sin(ev.pitch) * math.sin(ev.yaw), math.cos(ev.pitch))
+    if phase_name in PHASE_CANONICAL_SCENARIOS:
+        scenario = SCENARIOS[PHASE_CANONICAL_SCENARIOS[phase_name]]
+        local_f, local_r, local_u = _canonical_local_offset(phase_name)
+        speed_delta = scenario.pursuer.speed - scenario.evader.speed
+        yaw_delta = scenario.pursuer.yaw - scenario.evader.yaw
+        pitch_delta = scenario.pursuer.pitch - scenario.evader.pitch
+    else:
+        # rear_vertical intentionally remains composite-only: it has no single
+        # canonical low-level home scenario.
+        local_f, local_r, local_u = (-4.5, 0.0, -7.5)
+        speed_delta, yaw_delta, pitch_delta = 1.5, 0.0, 0.0
 
-    offsets = {
-        "rear": (-6.0, 0.0, 0.0),
-        "flank": (-2.5, 7.0, 0.0),
-        "boundary": (-5.0, 2.0, 0.0),
-        "vertical": (-2.5, 0.0, -9.0),
-        "rear_vertical": (-4.5, 0.0, -7.5),
-    }
-    local_f, local_r, local_u = offsets[phase_name]
+    forward, right, up = _body_axes(ev)
     pu = Agent3DState(
         x=ev.x + local_f * forward[0] + local_r * right[0] + local_u * up[0],
         y=ev.y + local_f * forward[1] + local_r * right[1] + local_u * up[1],
         z=ev.z + local_f * forward[2] + local_r * right[2] + local_u * up[2],
-        speed=max(ev.speed + 1.5, 11.0),
-        yaw=ev.yaw,
-        pitch=ev.pitch,
+        speed=ev.speed + speed_delta,
+        yaw=ev.yaw + yaw_delta,
+        pitch=ev.pitch + pitch_delta,
     )
     return Env3DState(evader=ev, pursuer=pu, step_count=0)
 

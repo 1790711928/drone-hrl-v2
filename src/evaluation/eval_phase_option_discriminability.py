@@ -8,7 +8,8 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from src.env.dynamics import Agent3DState
+from src.env.dynamics import Agent3DState, Env3DState
+from src.env.scenarios import SCENARIOS
 from src.training.highlevel_env import HighLevelOptionEnv, PHASE_SUCCESS_THRESHOLDS
 
 
@@ -41,12 +42,14 @@ CSV_FIELDS = (
     "improvement_score",
     "distance_gain",
     "closing_speed_reduction",
+    "rear_pressure_abs_reduction",
     "rear_pressure_improvement_score",
     "threat_right_abs_reduction",
     "lateral_threat_improvement_score",
     "min_boundary_margin_change",
     "boundary_recovery_improvement_score",
     "vertical_target_band_rate",
+    "controlled_z_margin_rate",
     "threat_up_abs_reduction",
     "z_margin_change",
     "vertical_improvement_score",
@@ -86,17 +89,38 @@ def expand_eval_modes(raw: str) -> list[str]:
     return list(EVAL_MODES) if raw == "both" else [raw]
 
 
-def _reset_standalone_phase(env: HighLevelOptionEnv, phase_type: str) -> None:
+def _prepare_standalone_phase(env: HighLevelOptionEnv, phase_type: str, source: str) -> None:
     env.prev_option = None
     env.highlevel_step_count = 0
     env.switch_count = 0
-    env.current_scenario_name = f"diagnostic_{phase_type}"
+    env.current_scenario_name = f"diagnostic_{source}_{phase_type}"
     env.phase_index = 0
     env.completed_phases = 0
     env.phase_names = (phase_type,)
     env.phase_success_by_type = {}
     env.phase_failure_by_type = {}
+
+
+def reset_injected_phase(env: HighLevelOptionEnv, phase_type: str) -> None:
+    _prepare_standalone_phase(env, phase_type, "injected")
     env._inject_current_phase(PHASE_SEED_EVADERS[phase_type])
+
+
+def reset_canonical_phase(env: HighLevelOptionEnv, phase_type: str) -> None:
+    if phase_type == "rear_vertical":
+        reset_injected_phase(env, phase_type)
+        return
+    scenario_by_phase = {
+        "rear": "rear_close_threat",
+        "flank": "flank_threat",
+        "boundary": "boundary_constrained",
+        "vertical": "vertical_z_threat",
+    }
+    scenario = scenario_by_phase[phase_type]
+    spec = SCENARIOS[scenario]
+    _prepare_standalone_phase(env, phase_type, "canonical")
+    env._set_inner_state(Env3DState(evader=spec.evader, pursuer=spec.pursuer, step_count=0), scenario)
+    env._reset_phase_tracking()
 
 
 def _estimated_closing_speed(env: HighLevelOptionEnv) -> float:
@@ -136,22 +160,38 @@ def _vertical_target_metric(phase_type: str, obs: dict[str, float]) -> float:
     return float(controlled)
 
 
+def _clip_unit(value: float) -> float:
+    return max(-1.0, min(1.0, value))
+
+
 def _improvement_metrics(phase_type: str, start: dict[str, float], final: dict[str, float]) -> dict[str, float]:
     distance_gain = final["distance"] - start["distance"]
     closing_speed_reduction = start["closing_speed"] - final["closing_speed"]
+    rear_pressure_reduction = abs(start["threat_forward"]) - abs(final["threat_forward"])
     threat_right_reduction = abs(start["threat_right"]) - abs(final["threat_right"])
     boundary_margin_change = final["min_boundary_margin"] - start["min_boundary_margin"]
     target_band = _vertical_target_metric(phase_type, final)
+    controlled_z_margin = float(final["boundary_margin_z"] >= PHASE_SUCCESS_THRESHOLDS.get(phase_type, {}).get("z_margin_safe", 0.20))
     threat_up_reduction = abs(start["threat_up"]) - abs(final["threat_up"])
     z_margin_change = final["boundary_margin_z"] - start["boundary_margin_z"]
 
-    # Scores normalize short-window changes by the existing sequential criteria.
-    # They rank options for diagnostics only; they never feed training rewards.
-    rear_score = distance_gain / 0.025 + closing_speed_reduction / 0.08
-    lateral_score = threat_right_reduction / 0.20 + distance_gain / 0.02
-    boundary_score = boundary_margin_change / 0.07
-    vertical_score = target_band + threat_up_reduction / 0.20 + z_margin_change / 0.10
-    combined_score = 0.5 * rear_score + 0.5 * vertical_score
+    # Bounded, phase-specific scores prevent unrelated distance or margin changes
+    # from dominating the diagnostic. These values rank options only and never
+    # feed environment rewards or training logic.
+    rear_score = (
+        0.40 * _clip_unit(distance_gain / 0.025)
+        + 0.35 * _clip_unit(closing_speed_reduction / 0.08)
+        + 0.25 * _clip_unit(rear_pressure_reduction / 0.20)
+    )
+    lateral_score = 0.85 * _clip_unit(threat_right_reduction / 0.20) + 0.15 * _clip_unit(distance_gain / 0.02)
+    boundary_score = _clip_unit(boundary_margin_change / 0.07)
+    vertical_score = (
+        0.35 * target_band
+        + 0.30 * controlled_z_margin
+        + 0.25 * _clip_unit(threat_up_reduction / 0.20)
+        + 0.10 * _clip_unit(z_margin_change / 0.10)
+    )
+    combined_score = 0.40 * rear_score + 0.40 * vertical_score + 0.20 * min(rear_score, vertical_score)
     score_by_phase = {
         "rear": rear_score,
         "flank": lateral_score,
@@ -162,12 +202,14 @@ def _improvement_metrics(phase_type: str, start: dict[str, float], final: dict[s
     return {
         "distance_gain": distance_gain,
         "closing_speed_reduction": closing_speed_reduction,
+        "rear_pressure_abs_reduction": rear_pressure_reduction,
         "rear_pressure_improvement_score": rear_score,
         "threat_right_abs_reduction": threat_right_reduction,
         "lateral_threat_improvement_score": lateral_score,
         "min_boundary_margin_change": boundary_margin_change,
         "boundary_recovery_improvement_score": boundary_score,
         "vertical_target_band_rate": target_band,
+        "controlled_z_margin_rate": controlled_z_margin,
         "threat_up_abs_reduction": threat_up_reduction,
         "z_margin_change": z_margin_change,
         "vertical_improvement_score": vertical_score,
@@ -182,6 +224,7 @@ def evaluate_phase_option(
     option_index: int,
     episodes: int,
     eval_mode: str,
+    source: str = "injected",
 ) -> dict[str, Any]:
     if eval_mode not in EVAL_MODES:
         raise ValueError(f"Unsupported eval mode: {eval_mode}")
@@ -191,7 +234,12 @@ def evaluate_phase_option(
     metric_samples: list[dict[str, float]] = []
 
     for _ in range(episodes):
-        _reset_standalone_phase(env, phase_type)
+        if source == "canonical":
+            reset_canonical_phase(env, phase_type)
+        elif source == "injected":
+            reset_injected_phase(env, phase_type)
+        else:
+            raise ValueError(f"Unsupported phase source: {source}")
         start = _current_observation(env)
         total_reward = 0.0
         lowlevel_steps = 0
@@ -217,6 +265,8 @@ def evaluate_phase_option(
         metrics = _improvement_metrics(phase_type, start, final)
         if outcome == "out_of_bounds":
             metrics["improvement_score"] -= 2.0
+        elif outcome == "captured":
+            metrics["improvement_score"] -= 1.0
         metric_samples.append(metrics)
         rewards.append(total_reward)
 

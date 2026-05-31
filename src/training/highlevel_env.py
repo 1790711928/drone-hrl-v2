@@ -36,8 +36,10 @@ COMPOSITE_SCENARIOS: dict[str, tuple[Agent3DState, Agent3DState]] = {
         Agent3DState(x=-4.0, y=0.5, z=5.5, speed=11.5, yaw=0.05, pitch=0.15),
     ),
     "composite_flank_boundary": (
-        Agent3DState(x=42.0, y=1.5, z=9.5, speed=9.5, yaw=2.85, pitch=0.0),
-        Agent3DState(x=33.5, y=9.5, z=9.0, speed=11.0, yaw=0.20, pitch=0.0),
+        # Inward-facing evader with a pursuer on the outer flank: recoverable,
+        # but still requires boundary recovery before resolving the flank.
+        Agent3DState(x=42.0, y=1.5, z=9.5, speed=9.5, yaw=3.05, pitch=0.0),
+        Agent3DState(x=44.0, y=8.5, z=9.0, speed=11.0, yaw=2.80, pitch=0.0),
     ),
     "composite_rear_boundary": (
         Agent3DState(x=45.0, y=-1.0, z=10.5, speed=9.8, yaw=0.55, pitch=0.0),
@@ -48,8 +50,10 @@ COMPOSITE_SCENARIOS: dict[str, tuple[Agent3DState, Agent3DState]] = {
         Agent3DState(x=38.0, y=0.5, z=1.8, speed=11.0, yaw=0.20, pitch=0.12),
     ),
     "composite_rear_flank_boundary": (
-        Agent3DState(x=42.5, y=0.5, z=9.0, speed=9.6, yaw=2.95, pitch=0.0),
-        Agent3DState(x=35.8, y=6.5, z=8.6, speed=11.2, yaw=0.25, pitch=0.0),
+        # Pursuer starts behind and to the flank in the evader-local frame,
+        # while the evader has enough room for pi3 to recover from x_max.
+        Agent3DState(x=42.5, y=0.5, z=9.0, speed=9.6, yaw=3.02, pitch=0.0),
+        Agent3DState(x=45.0, y=4.8, z=8.6, speed=11.2, yaw=2.75, pitch=0.0),
     ),
 }
 

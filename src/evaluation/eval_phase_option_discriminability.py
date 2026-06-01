@@ -10,12 +10,13 @@ from typing import Any
 
 from src.env.dynamics import Agent3DState, Env3DState
 from src.env.scenarios import SCENARIOS
+from src.env.termination import TerminationState
 from src.training.highlevel_env import HighLevelOptionEnv, PHASE_SUCCESS_THRESHOLDS
 
 
 OPTION_NAMES = ("pi1", "pi2", "pi3", "pi4")
 PHASE_TYPES = ("rear", "flank", "boundary", "vertical", "rear_vertical")
-EVAL_MODES = ("one_shot", "sustained")
+EVAL_MODES = ("one_shot", "fixed_window", "sustained")
 EXPECTED_OPTIONS: dict[str, tuple[str, ...]] = {
     "rear": ("pi1",),
     "flank": ("pi2",),
@@ -36,8 +37,10 @@ CSV_FIELDS = (
     "expected_option",
     "episodes",
     "option_duration",
+    "window_lowlevel_steps",
     "phase_success_rate",
     "one_shot_success_rate",
+    "fixed_window_success_rate",
     "sustained_success_rate",
     "improvement_score",
     "distance_gain",
@@ -59,6 +62,7 @@ CSV_FIELDS = (
     "timeout_rate",
     "avg_reward",
     "avg_completion_step",
+    "avg_lowlevel_steps",
 )
 
 # These representative evader states only select where a standalone injected
@@ -86,7 +90,9 @@ def parse_phase_types(raw: str) -> list[str]:
 
 
 def expand_eval_modes(raw: str) -> list[str]:
-    return list(EVAL_MODES) if raw == "both" else [raw]
+    # Preserve the existing "both" contract: compare the two endpoint modes.
+    # fixed_window is selected explicitly because it has an independent horizon.
+    return ["one_shot", "sustained"] if raw == "both" else [raw]
 
 
 def _prepare_standalone_phase(env: HighLevelOptionEnv, phase_type: str, source: str) -> None:
@@ -218,6 +224,35 @@ def _improvement_metrics(phase_type: str, start: dict[str, float], final: dict[s
     }
 
 
+
+def _run_fixed_window(
+    env: HighLevelOptionEnv,
+    option_index: int,
+    window_lowlevel_steps: int,
+) -> tuple[float, int, dict[str, Any]]:
+    """Execute exactly one diagnostic low-level window without phase transitions."""
+    total_reward = 0.0
+    lowlevel_steps = 0
+    info: dict[str, Any] = {"outcome": "running"}
+    obs = env.inner._flatten_obs(env.inner.inner._observation(0.0))
+
+    while lowlevel_steps < window_lowlevel_steps:
+        action, _ = env.low_models[option_index].predict(obs, deterministic=True)
+        obs, reward, _, truncated, info = env.inner.step(action)
+        total_reward += float(reward)
+        lowlevel_steps += 1
+        outcome = str(info.get("outcome", "running"))
+        if outcome in {"captured", "out_of_bounds"} or truncated:
+            break
+        if outcome == "escaped":
+            # Match sequential semantics: a base escape is not phase completion.
+            total_reward -= 50.0
+            env.inner.inner.tstate = TerminationState()
+            info = dict(info)
+            info["outcome"] = "running"
+
+    return total_reward, lowlevel_steps, info
+
 def evaluate_phase_option(
     env: HighLevelOptionEnv,
     phase_type: str,
@@ -225,13 +260,17 @@ def evaluate_phase_option(
     episodes: int,
     eval_mode: str,
     source: str = "injected",
+    window_lowlevel_steps: int = 16,
 ) -> dict[str, Any]:
     if eval_mode not in EVAL_MODES:
         raise ValueError(f"Unsupported eval mode: {eval_mode}")
+    if window_lowlevel_steps <= 0:
+        raise ValueError("window_lowlevel_steps must be positive")
     successes = captures = out_of_bounds = timeouts = 0
     completion_steps: list[int] = []
     rewards: list[float] = []
     metric_samples: list[dict[str, float]] = []
+    lowlevel_step_samples: list[int] = []
 
     for _ in range(episodes):
         if source == "canonical":
@@ -245,16 +284,22 @@ def evaluate_phase_option(
         lowlevel_steps = 0
         info: dict[str, Any] = {"outcome": "running"}
 
-        while True:
-            _, reward, terminated, truncated, info = env.step(option_index)
-            total_reward += float(reward)
-            lowlevel_steps += int(info.get("option_duration_used", 0))
-            if eval_mode == "one_shot" or terminated or truncated:
-                break
+        if eval_mode == "fixed_window":
+            total_reward, lowlevel_steps, info = _run_fixed_window(env, option_index, window_lowlevel_steps)
+        else:
+            while True:
+                _, reward, terminated, truncated, info = env.step(option_index)
+                total_reward += float(reward)
+                lowlevel_steps += int(info.get("option_duration_used", 0))
+                if eval_mode == "one_shot" or terminated or truncated:
+                    break
 
         final = _current_observation(env, info)
         outcome = str(info.get("outcome", "running"))
-        success = bool(info.get("completed_phases", 0) == 1 and outcome == "escaped")
+        if eval_mode == "fixed_window":
+            success = bool(env._phase_condition(final) and outcome not in {"captured", "out_of_bounds", "timeout"})
+        else:
+            success = bool(info.get("completed_phases", 0) == 1 and outcome == "escaped")
         successes += int(success)
         captures += int(outcome == "captured")
         out_of_bounds += int(outcome == "out_of_bounds")
@@ -269,6 +314,7 @@ def evaluate_phase_option(
             metrics["improvement_score"] -= 1.0
         metric_samples.append(metrics)
         rewards.append(total_reward)
+        lowlevel_step_samples.append(lowlevel_steps)
 
     averaged_metrics = {key: mean(sample[key] for sample in metric_samples) for key in metric_samples[0]}
     success_rate = successes / episodes
@@ -279,8 +325,10 @@ def evaluate_phase_option(
         "expected_option": "/".join(EXPECTED_OPTIONS[phase_type]),
         "episodes": episodes,
         "option_duration": env.option_duration,
+        "window_lowlevel_steps": window_lowlevel_steps if eval_mode == "fixed_window" else "",
         "phase_success_rate": success_rate,
         "one_shot_success_rate": success_rate if eval_mode == "one_shot" else "",
+        "fixed_window_success_rate": success_rate if eval_mode == "fixed_window" else "",
         "sustained_success_rate": success_rate if eval_mode == "sustained" else "",
         **averaged_metrics,
         "capture_rate": captures / episodes,
@@ -288,6 +336,7 @@ def evaluate_phase_option(
         "timeout_rate": timeouts / episodes,
         "avg_reward": mean(rewards),
         "avg_completion_step": mean(completion_steps) if completion_steps else 0.0,
+        "avg_lowlevel_steps": mean(lowlevel_step_samples),
     }
 
 
@@ -344,7 +393,8 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--phase-types", default="all", help="Comma-separated rear,flank,boundary,vertical,rear_vertical or all")
     parser.add_argument("--option-duration", type=int, default=8)
-    parser.add_argument("--eval-mode", choices=["one_shot", "sustained", "both"], default="one_shot")
+    parser.add_argument("--eval-mode", choices=["one_shot", "fixed_window", "sustained", "both"], default="one_shot")
+    parser.add_argument("--window-lowlevel-steps", type=int, default=16)
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
     parser.add_argument("--out-dir", default="outputs/evaluation")
     args = parser.parse_args()
@@ -353,6 +403,8 @@ def main() -> None:
         parser.error("--episodes must be positive")
     if args.option_duration <= 0:
         parser.error("--option-duration must be positive")
+    if args.window_lowlevel_steps <= 0:
+        parser.error("--window-lowlevel-steps must be positive")
     try:
         phases = parse_phase_types(args.phase_types)
     except ValueError as exc:
@@ -373,7 +425,10 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for eval_mode in expand_eval_modes(args.eval_mode):
         mode_rows = [
-            evaluate_phase_option(env, phase_type, option_index, args.episodes, eval_mode)
+            evaluate_phase_option(
+                env, phase_type, option_index, args.episodes, eval_mode,
+                window_lowlevel_steps=args.window_lowlevel_steps,
+            )
             for phase_type in phases
             for option_index in range(len(OPTION_NAMES))
         ]

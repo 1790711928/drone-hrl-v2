@@ -281,7 +281,13 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 python -m src.evaluation.eval_phase_option_discriminability --episodes 10 --phase-types all --option-duration 8 --eval-mode one_shot
 ```
 
-`eval_phase_option_discriminability.py` 会使用现有 phase 注入函数和 phase-specific 成功条件，输出 rear/flank/boundary/vertical/rear_vertical × pi1/pi2/pi3/pi4 矩阵。`--eval-mode one_shot` 只执行一次 option 窗口，用于判断当前 phase 下哪个 option 的短期改善效果最好；`--eval-mode sustained` 会重复执行同一个 option 直到成功、失败或超时，用于判断该 option 最终能否独立解决 phase；`--eval-mode both` 会同时输出两类结果。训练 PPO 前应优先查看 one-shot improvement matrix，而不是仅看 sustained success matrix。如果某个 option 在多数 phase 的短窗口改善分数都是 top-1，或某个 phase 下所有 option 分数接近，则当前 sequential benchmark 缺少 option 区分度，不应直接开始训练 PPO。
+`eval_phase_option_discriminability.py` 会使用现有 phase 注入函数和 phase-specific 成功条件，输出 rear/flank/boundary/vertical/rear_vertical × pi1/pi2/pi3/pi4 矩阵。诊断模式分为：
+- `--eval-mode one_shot`：只执行一次 option 决策窗口，用于检查即时方向，但窗口可能过短；
+- `--eval-mode fixed_window --window-lowlevel-steps 16`：执行固定数量的低层 step，用于判断 option 的短中期专属性，推荐在训练高层 PPO 前优先查看；
+- `--eval-mode sustained`：重复执行同一 option 直到成功、失败或超时，适合检查最终能力，但可能高估错误 option；
+- `--eval-mode both`：保持兼容，同时输出 `one_shot` 与 `sustained` 两个端点模式。
+
+如果某个 option 在多数 phase 的 fixed-window 改善分数都是 top-1，或某个 phase 下所有 option 分数接近，则当前 sequential benchmark 缺少 option 区分度，不应直接开始训练 PPO。
 
 如需判断异常来自底层策略还是 high-level phase 注入分布偏移，请运行：
 ```powershell

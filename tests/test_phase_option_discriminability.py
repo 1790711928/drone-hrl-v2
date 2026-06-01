@@ -64,3 +64,43 @@ def test_canonical_and_injected_geometry_can_be_reset_without_models():
     assert canonical["canonical_scenario"] == "flank_threat"
     assert abs(canonical["threat_right"] - injected["threat_right"]) < 1e-9
     assert abs(canonical["threat_forward"] - injected["threat_forward"]) < 1e-9
+
+
+def test_fixed_window_executes_requested_lowlevel_steps_only():
+    models = [CountingZeroModel() for _ in range(4)]
+    env = HighLevelOptionEnv(models, option_duration=2, scenario_set="sequential")
+    row = evaluate_phase_option(
+        env,
+        "rear",
+        option_index=0,
+        episodes=1,
+        eval_mode="fixed_window",
+        window_lowlevel_steps=5,
+    )
+    assert models[0].predict_calls == 5
+    assert row["eval_mode"] == "fixed_window"
+    assert row["window_lowlevel_steps"] == 5
+    assert row["avg_lowlevel_steps"] == 5
+    assert row["fixed_window_success_rate"] == row["phase_success_rate"]
+
+
+def test_fixed_window_ignores_base_escape_until_window_is_complete():
+    from src.evaluation.eval_phase_option_discriminability import _run_fixed_window, reset_injected_phase
+
+    models = [CountingZeroModel() for _ in range(4)]
+    env = HighLevelOptionEnv(models, option_duration=2, scenario_set="sequential")
+    reset_injected_phase(env, "rear")
+    env.inner.step = lambda action: (
+        env.inner._flatten_obs(env.inner.inner._observation(0.0)),
+        50.0,
+        True,
+        False,
+        {"outcome": "escaped", "closing_speed": 0.0},
+    )
+
+    reward, lowlevel_steps, info = _run_fixed_window(env, option_index=0, window_lowlevel_steps=5)
+
+    assert models[0].predict_calls == 5
+    assert lowlevel_steps == 5
+    assert reward == 0.0
+    assert info["outcome"] == "running"

@@ -298,7 +298,18 @@ python -m src.evaluation.eval_phase_canonical_alignment --episodes 5 --option-du
 
 基础 sequential phase（rear/flank/boundary/vertical）的注入 geometry 由四个 canonical 低层主场景派生，避免高层调用分布与底层训练分布维护两套手写参数。`rear_vertical` 仍是显式复合 phase。
 
-### 6.8 冻结低层后训练上层 PPO 切换器
+### 6.8 高层轨迹可视化
+```powershell
+# 绘制训练好的高层 selector 成功轨迹
+python -m src.evaluation.plot_highlevel_trajectories --mode highlevel --scenario-set sequential --episodes 20 --only-success --max-plots 5
+
+# 绘制 fixed pi3 的失败轨迹，便于与 selector 对比
+python -m src.evaluation.plot_highlevel_trajectories --mode fixed --fixed-policy 2 --scenario-set sequential --episodes 20 --only-failure --max-plots 5
+```
+
+`plot_highlevel_trajectories.py` 会保存逃跑方与追击方的 3D 轨迹、起终点、phase 起点和 option 切换标记。PNG 与被绘图 episode 的 summary CSV 默认写入 `outputs/evaluation/highlevel_traj_plots/`。脚本优先保留 high-level 成功轨迹、fixed pi3 失败轨迹，并特别关注 `sequential_rear_vertical_to_boundary`。
+
+### 6.9 冻结低层后训练上层 PPO 切换器
 ```powershell
 python -m src.training.train_highlevel --timesteps 300000 --model-out outputs/checkpoints/ppo_highlevel_switch.zip
 ```

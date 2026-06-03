@@ -37,6 +37,24 @@ def compressed_option_sequence(actions: list[int]) -> list[int]:
     return sequence
 
 
+def trajectory_segments(phase_starts: list[tuple[int, str]], point_count: int) -> list[tuple[int, int, str]]:
+    if point_count <= 0:
+        return []
+    starts = sorted({max(0, min(point_count - 1, index)): name for index, name in phase_starts}.items())
+    if not starts or starts[0][0] != 0:
+        starts.insert(0, (0, "phase"))
+    segments: list[tuple[int, int, str]] = []
+    for offset, (start_index, phase_name) in enumerate(starts):
+        next_start = starts[offset + 1][0] if offset + 1 < len(starts) else point_count
+        end_index = max(start_index, next_start - 1)
+        segments.append((start_index, end_index, phase_name))
+    return segments
+
+
+def phase_reset_jumps(segments: list[tuple[int, int, str]]) -> list[tuple[int, int]]:
+    return [(segments[index][1], segments[index + 1][0]) for index in range(len(segments) - 1)]
+
+
 @dataclass
 class TrajectoryRecorder:
     env: HighLevelOptionEnv
@@ -121,8 +139,12 @@ def rollout_episode(
     fixed_policy: int,
     high_model: Any | None,
     scenario_set: str,
+    scenario_name: str | None = None,
 ) -> EpisodePlotData:
-    obs, info = env.reset(options={"scenario_set": scenario_set})
+    reset_options = {"scenario_set": scenario_set}
+    if scenario_name:
+        reset_options["scenario_name"] = scenario_name
+    obs, info = env.reset(options=reset_options)
     scenario = str(info.get("scenario_name", "unknown"))
     recorder.reset(str(info.get("phase_name", "start")))
     actions: list[int] = []
@@ -178,21 +200,69 @@ def select_episodes_for_plot(
     fixed_policy: int,
     only_success: bool,
     only_failure: bool,
+    one_per_scenario: bool = False,
+    one_per_option_sequence: bool = False,
 ) -> list[EpisodePlotData]:
     filtered = [episode for episode in episodes if not only_success or episode.success]
     filtered = [episode for episode in filtered if not only_failure or not episode.success]
-    return sorted(filtered, key=lambda episode: plot_priority(episode, fixed_policy), reverse=True)[:max_plots]
+    selected: list[EpisodePlotData] = []
+    seen_scenarios: set[str] = set()
+    seen_sequences: set[tuple[int, ...]] = set()
+    for episode in sorted(filtered, key=lambda item: plot_priority(item, fixed_policy), reverse=True):
+        sequence = tuple(episode.option_sequence)
+        if one_per_scenario and episode.scenario in seen_scenarios:
+            continue
+        if one_per_option_sequence and sequence in seen_sequences:
+            continue
+        selected.append(episode)
+        seen_scenarios.add(episode.scenario)
+        seen_sequences.add(sequence)
+        if len(selected) >= max_plots:
+            break
+    return selected
+
+def _plot_segment(ax, points: list[tuple[float, float, float]], *, color: str, linestyle: str, linewidth: float, label: str | None) -> None:
+    if len(points) == 1:
+        ax.scatter(*points[0], color=color, marker=".", s=25, label=label)
+        return
+    coords = list(zip(*points))
+    ax.plot(*coords, color=color, linestyle=linestyle, linewidth=linewidth, label=label)
 
 
-def save_plot(episode: EpisodePlotData, plot_dir: Path, bounds: tuple[float, float, float, float, float, float]) -> Path:
+def save_plot(
+    episode: EpisodePlotData,
+    plot_dir: Path,
+    bounds: tuple[float, float, float, float, float, float],
+    *,
+    break_at_phase_transition: bool = True,
+    show_phase_reset_jump: bool = False,
+    showcase_mode: str = "phase_based",
+) -> Path:
     import matplotlib.pyplot as plt
 
-    evader = list(zip(*episode.evader_points))
-    pursuer = list(zip(*episode.pursuer_points))
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
-    ax.plot(*evader, color="tab:blue", linewidth=2.0, label="evader")
-    ax.plot(*pursuer, color="tab:red", linestyle="--", linewidth=1.6, label="pursuer")
+    segments = trajectory_segments(episode.phase_starts, len(episode.evader_points)) if break_at_phase_transition else [(0, len(episode.evader_points) - 1, "all")]
+    for segment_index, (start, end, _) in enumerate(segments):
+        evader_segment = episode.evader_points[start : end + 1]
+        pursuer_segment = episode.pursuer_points[start : end + 1]
+        _plot_segment(ax, evader_segment, color="tab:blue", linestyle="-", linewidth=2.0, label="evader" if segment_index == 0 else None)
+        _plot_segment(ax, pursuer_segment, color="tab:red", linestyle="--", linewidth=1.6, label="pursuer" if segment_index == 0 else None)
+
+    if break_at_phase_transition and show_phase_reset_jump:
+        for jump_index, (end_index, start_index) in enumerate(phase_reset_jumps(segments)):
+            evader_jump = [episode.evader_points[end_index], episode.evader_points[start_index]]
+            pursuer_jump = [episode.pursuer_points[end_index], episode.pursuer_points[start_index]]
+            _plot_segment(
+                ax,
+                evader_jump,
+                color="gray",
+                linestyle=":",
+                linewidth=1.0,
+                label="phase reset jump (not physical)" if jump_index == 0 else None,
+            )
+            _plot_segment(ax, pursuer_jump, color="gray", linestyle=":", linewidth=1.0, label=None)
+
     ax.scatter(*episode.evader_points[0], color="green", marker="o", s=65, label="evader start")
     ax.scatter(*episode.evader_points[-1], color="black", marker="X", s=70, label="evader end")
 
@@ -212,9 +282,10 @@ def save_plot(episode: EpisodePlotData, plot_dir: Path, bounds: tuple[float, flo
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
+    title_suffix = "phase-based sequential rollout" if showcase_mode == "phase_based" else "continuous showcase requested (not benchmark)"
     ax.set_title(
         f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | "
-        f"switch_count={episode.switch_count}"
+        f"switch_count={episode.switch_count}\n{title_suffix}"
     )
     ax.legend(loc="upper left")
     fig.tight_layout()
@@ -230,24 +301,32 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Plot high-level option trajectories for presentation")
     parser.add_argument("--mode", choices=["highlevel", "fixed"], default="highlevel")
     parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential"], default="sequential")
+    parser.add_argument("--scenario-name", default=None)
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--fixed-policy", type=int, choices=range(4), default=2)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
     parser.add_argument("--out-dir", default="outputs/evaluation")
     parser.add_argument("--max-plots", type=int, default=5)
+    parser.add_argument("--one-per-scenario", action="store_true")
+    parser.add_argument("--one-per-option-sequence", action="store_true")
     filter_group = parser.add_mutually_exclusive_group()
     filter_group.add_argument("--only-success", action="store_true")
     filter_group.add_argument("--only-failure", action="store_true")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
+    parser.add_argument("--break-at-phase-transition", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--show-phase-reset-jump", action="store_true")
+    parser.add_argument("--showcase-mode", choices=["phase_based", "continuous"], default="phase_based")
     args = parser.parse_args()
 
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
     if args.max_plots <= 0:
         parser.error("--max-plots must be positive")
+    if args.showcase_mode == "continuous":
+        print("showcase-mode=continuous is reserved for future continuous showcase scenarios; current plots still use benchmark rollouts.")
     if importlib.util.find_spec("matplotlib") is None:
         print("matplotlib is not installed. Please install matplotlib to save high-level trajectory plots.")
         return
@@ -287,6 +366,7 @@ def main() -> None:
             fixed_policy=args.fixed_policy,
             high_model=high_model,
             scenario_set=args.scenario_set,
+            scenario_name=args.scenario_name,
         )
         for episode_id in range(1, args.episodes + 1)
     ]
@@ -296,6 +376,8 @@ def main() -> None:
         fixed_policy=args.fixed_policy,
         only_success=args.only_success,
         only_failure=args.only_failure,
+        one_per_scenario=args.one_per_scenario,
+        one_per_option_sequence=args.one_per_option_sequence,
     )
 
     output_dir = Path(args.out_dir)
@@ -303,7 +385,9 @@ def main() -> None:
     term_cfg = env.inner.inner.term_cfg
     bounds = (term_cfg.x_min, term_cfg.x_max, term_cfg.y_min, term_cfg.y_max, term_cfg.z_min, term_cfg.z_max)
     for episode in selected:
-        print(f"Saved plot: {save_plot(episode, plot_dir, bounds)}")
+        print(
+            f"Saved plot: {save_plot(episode, plot_dir, bounds, break_at_phase_transition=args.break_at_phase_transition, show_phase_reset_jump=args.show_phase_reset_jump, showcase_mode=args.showcase_mode)}"
+        )
 
     plot_dir.mkdir(parents=True, exist_ok=True)
     csv_path = plot_dir / "highlevel_trajectory_summary.csv"

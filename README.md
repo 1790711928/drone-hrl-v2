@@ -300,14 +300,16 @@ python -m src.evaluation.eval_phase_canonical_alignment --episodes 5 --option-du
 
 ### 6.8 高层轨迹可视化
 ```powershell
-# 绘制训练好的高层 selector 成功轨迹
-python -m src.evaluation.plot_highlevel_trajectories --mode highlevel --scenario-set sequential --episodes 20 --only-success --max-plots 5
+# 绘制训练好的高层 selector 成功轨迹（默认按 phase 分段，避免把 phase reset 画成真实飞行）
+python -m src.evaluation.plot_highlevel_trajectories --mode highlevel --scenario-set sequential --scenario-name sequential_rear_vertical_to_boundary --episodes 20 --only-success --max-plots 5 --break-at-phase-transition
 
 # 绘制 fixed pi3 的失败轨迹，便于与 selector 对比
-python -m src.evaluation.plot_highlevel_trajectories --mode fixed --fixed-policy 2 --scenario-set sequential --episodes 20 --only-failure --max-plots 5
+python -m src.evaluation.plot_highlevel_trajectories --mode fixed --fixed-policy 2 --scenario-set sequential --scenario-name sequential_rear_vertical_to_boundary --episodes 20 --only-failure --max-plots 5 --break-at-phase-transition
 ```
 
 `plot_highlevel_trajectories.py` 会保存逃跑方与追击方的 3D 轨迹、起终点、phase 起点和 option 切换标记。PNG 与被绘图 episode 的 summary CSV 默认写入 `outputs/evaluation/highlevel_traj_plots/`。脚本优先保留 high-level 成功轨迹、fixed pi3 失败轨迹，并特别关注 `sequential_rear_vertical_to_boundary`。
+
+注意：当前 sequential 图是 **phase-based benchmark rollout**，phase transition 会注入下一阶段状态，不是完全连续物理追逐。脚本默认 `--break-at-phase-transition`，每个 phase 单独画线，避免把 reset jump 误画成长直线；如需展示跳转，可加 `--show-phase-reset-jump`，它会用灰色虚线标注 `phase reset jump (not physical)`。`--one-per-scenario` 与 `--one-per-option-sequence` 可减少重复图。`--showcase-mode continuous` 仅预留接口；如需长时间自然追逐图，应另行构建 continuous showcase scenario 并重新评估，不应修改当前 benchmark 图来伪造连续轨迹。
 
 ### 6.9 冻结低层后训练上层 PPO 切换器
 ```powershell

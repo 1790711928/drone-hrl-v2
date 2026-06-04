@@ -31,6 +31,8 @@ def episode(*, mode="fixed", success=False, scenario="sequential_rear_to_boundar
         pursuer_points=[(1.0, 0.0, 0.0)],
         option_switches=[(0, "pi3")],
         phase_starts=[(0, "rear")],
+        regime_starts=[],
+        lowlevel_steps=0,
     )
 
 
@@ -107,3 +109,29 @@ def test_rollout_accepts_specific_scenario_name():
     )
     assert result.scenario == "sequential_rear_vertical_to_boundary"
     assert result.phase_starts[0][1] == "rear_vertical"
+
+
+def test_continuous_rollout_records_regime_switches():
+    env = HighLevelOptionEnv(
+        [ZeroModel()] * 4,
+        option_duration=1,
+        max_highlevel_steps=5,
+        scenario_set="continuous_pursuit",
+        episode_lowlevel_steps=5,
+        regime_duration=2,
+    )
+    recorder = TrajectoryRecorder(env)
+    recorder.attach()
+    result = rollout_episode(
+        env,
+        recorder,
+        episode_id=9,
+        mode="fixed",
+        fixed_policy=2,
+        high_model=None,
+        scenario_set="continuous_pursuit",
+    )
+    assert result.scenario == "continuous_pursuit"
+    assert result.lowlevel_steps > 0
+    assert result.regime_starts[0][1] == "rear"
+    assert len(result.evader_points) >= result.lowlevel_steps + 1

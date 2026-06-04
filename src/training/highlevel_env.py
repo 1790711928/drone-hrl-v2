@@ -8,9 +8,16 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from src.env.dynamics import Agent3DState, Env3DState
+from src.env.dynamics import (
+    Agent3DState,
+    Env3DState,
+    relative_distance,
+    rule_based_pursuer_control,
+    step_kinematics,
+)
+from src.env.reward import compute_reward
 from src.env.scenarios import SCENARIOS
-from src.env.termination import TerminationState
+from src.env.termination import EpisodeOutcome, TerminationState, evaluate_termination
 from src.training.sac_env import PursuitEscapeGymEnv
 
 BASIC_SCENARIOS = [
@@ -148,6 +155,15 @@ def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState
     return Env3DState(evader=ev, pursuer=pu, step_count=0)
 
 
+CONTINUOUS_PURSUIT_SCENARIO = "continuous_pursuit"
+DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
+CONTINUOUS_START_STATE = Env3DState(
+    evader=Agent3DState(x=-20.0, y=0.0, z=14.0, speed=10.0, yaw=0.0, pitch=0.02),
+    pursuer=Agent3DState(x=-42.0, y=2.0, z=10.0, speed=11.5, yaw=0.05, pitch=0.04),
+    step_count=0,
+)
+
+
 PHASE_SUCCESS_THRESHOLDS: dict[str, dict[str, float]] = {
     "rear": {"distance_gain": 0.025, "closing_speed_max": 0.08},
     "flank": {"threat_right_reduction": 0.20, "threat_right_safe": 0.40, "distance_loss_max": 0.02},
@@ -171,6 +187,10 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         switch_penalty: float = 0.02,
         max_highlevel_steps: int = 80,
         scenario_set: str = "mixed",
+        episode_lowlevel_steps: int = 400,
+        regime_duration: int = 60,
+        pursuer_speed_ratio: float = 1.25,
+        regime_schedule: str | tuple[str, ...] = DEFAULT_REGIME_SCHEDULE,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -178,6 +198,15 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.switch_penalty = switch_penalty
         self.max_highlevel_steps = max_highlevel_steps
         self.scenario_set = scenario_set
+        self.episode_lowlevel_steps = episode_lowlevel_steps
+        self.regime_duration = regime_duration
+        self.continuous_pursuer_speed_ratio = pursuer_speed_ratio
+        if isinstance(regime_schedule, str):
+            self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
+        else:
+            self.regime_schedule = tuple(regime_schedule)
+        if not self.regime_schedule:
+            self.regime_schedule = DEFAULT_REGIME_SCHEDULE
 
         self.inner = PursuitEscapeGymEnv(scenario="rear_close_threat")
         self.action_space = spaces.Discrete(4)
@@ -196,6 +225,10 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.phase_failed = False
         self.phase_success_by_type: dict[str, int] = {}
         self.phase_failure_by_type: dict[str, int] = {}
+        self.continuous_lowlevel_steps = 0
+        self.continuous_recent_distances: list[float] = []
+        self.continuous_recent_closing_speeds: list[float] = []
+        self.continuous_regimes_seen: set[str] = set()
 
     def _sample_basic(self) -> str:
         return str(self.np_random.choice(BASIC_SCENARIOS))
@@ -280,6 +313,219 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "phase_failure_by_phase_type": dict(self.phase_failure_by_type),
         }
 
+    def _continuous_regime(self) -> str:
+        index = self.continuous_lowlevel_steps // max(self.regime_duration, 1)
+        return self.regime_schedule[index % len(self.regime_schedule)]
+
+    def _continuous_pursuer_target(self, evader: Agent3DState, regime: str) -> Agent3DState:
+        forward, right, up = _body_axes(evader)
+        if regime == "flank":
+            side = -1.0 if (self.continuous_lowlevel_steps // max(self.regime_duration, 1)) % 2 else 1.0
+            offset = tuple(8.0 * forward[i] + side * 9.0 * right[i] for i in range(3))
+        elif regime == "vertical":
+            vertical_side = -1.0 if evader.z > 25.0 else 1.0
+            offset = tuple(3.0 * forward[i] + vertical_side * 10.0 * up[i] for i in range(3))
+        elif regime == "boundary":
+            term = self.inner.inner.term_cfg
+            push_x = 1.0 if evader.x >= 0.0 else -1.0
+            push_y = 1.0 if abs(evader.x) < 0.6 * term.x_max and evader.y >= 0.0 else 0.0
+            offset = (push_x * 10.0, push_y * 6.0, 0.0)
+        else:
+            offset = (0.0, 0.0, 0.0)
+        return Agent3DState(
+            x=evader.x + offset[0],
+            y=evader.y + offset[1],
+            z=max(self.inner.inner.term_cfg.z_min + 1.0, min(self.inner.inner.term_cfg.z_max - 1.0, evader.z + offset[2])),
+            speed=evader.speed,
+            yaw=evader.yaw,
+            pitch=evader.pitch,
+        )
+
+    def _reset_continuous_pursuit(self) -> tuple[np.ndarray, dict[str, Any]]:
+        self.current_scenario_name = CONTINUOUS_PURSUIT_SCENARIO
+        self.continuous_lowlevel_steps = 0
+        self.continuous_recent_distances = []
+        self.continuous_recent_closing_speeds = []
+        self.continuous_regimes_seen = set()
+        obs = self._set_inner_state(CONTINUOUS_START_STATE, "rear_close_threat")
+        regime = self._continuous_regime()
+        self.continuous_regimes_seen.add(regime)
+        return obs, {
+            "scenario_name": CONTINUOUS_PURSUIT_SCENARIO,
+            "scenario_set": "continuous_pursuit",
+            "regime_name": regime,
+            "continuous_lowlevel_steps": 0,
+            "regime_coverage_rate": len(self.continuous_regimes_seen) / len(set(self.regime_schedule)),
+        }
+
+    def _continuous_recent_metrics(self) -> tuple[float, float]:
+        window = max(1, min(len(self.continuous_recent_distances), 30))
+        if window == 0:
+            return 0.0, 0.0
+        recent_distance = float(sum(self.continuous_recent_distances[-window:]) / window)
+        recent_closing = float(sum(self.continuous_recent_closing_speeds[-window:]) / window)
+        return recent_distance, recent_closing
+
+    def _continuous_info(self, info: dict[str, Any], outcome: str, regime: str) -> dict[str, Any]:
+        state = self.inner.inner.state
+        final_distance = relative_distance(state) if state is not None else 0.0
+        recent_distance, recent_closing = self._continuous_recent_metrics()
+        info = dict(info)
+        info.update({
+            "outcome": outcome,
+            "regime_name": regime,
+            "regime_schedule": ",".join(self.regime_schedule),
+            "continuous_lowlevel_steps": self.continuous_lowlevel_steps,
+            "episode_lowlevel_steps": self.episode_lowlevel_steps,
+            "final_distance": final_distance,
+            "recent_distance": recent_distance,
+            "recent_closing_speed": recent_closing,
+            "regime_coverage_rate": len(self.continuous_regimes_seen) / max(len(set(self.regime_schedule)), 1),
+        })
+        return info
+
+    def _continuous_lowlevel_step(self, action: np.ndarray, regime: str):
+        env = self.inner.inner
+        if env.state is None:
+            raise RuntimeError("Call reset() before step().")
+        prev_distance = relative_distance(env.state)
+        ev_accel = float(action[0]) * 1.0
+        ev_yaw_rate = float(action[1]) * env.env_cfg.yaw_rate_max
+        ev_pitch_rate = float(action[2]) * env.env_cfg.pitch_rate_max
+        prev_evader_position = (env.state.evader.x, env.state.evader.y, env.state.evader.z)
+
+        evader_next = step_kinematics(
+            env.state.evader,
+            ev_accel,
+            ev_yaw_rate,
+            ev_pitch_rate,
+            env.env_cfg.dt,
+            env.env_cfg.evader_speed_min,
+            env.env_cfg.evader_speed_max,
+            env.env_cfg.yaw_rate_max,
+            env.env_cfg.pitch_rate_max,
+        )
+        target = self._continuous_pursuer_target(evader_next, regime)
+        pu_accel, pu_yaw_rate, pu_pitch_rate = rule_based_pursuer_control(
+            target,
+            env.state.pursuer,
+            self.continuous_pursuer_speed_ratio,
+        )
+        pursuer_next = step_kinematics(
+            env.state.pursuer,
+            pu_accel,
+            pu_yaw_rate,
+            pu_pitch_rate,
+            env.env_cfg.dt,
+            env.env_cfg.pursuer_speed_min,
+            env.env_cfg.pursuer_speed_max,
+            env.env_cfg.yaw_rate_max,
+            env.env_cfg.pitch_rate_max,
+        )
+
+        env.state = Env3DState(evader=evader_next, pursuer=pursuer_next, step_count=env.state.step_count + 1)
+        cur_distance = relative_distance(env.state)
+        closing_speed = (prev_distance - cur_distance) / env.env_cfg.dt
+        outcome = evaluate_termination(
+            distance=cur_distance,
+            closing_speed=closing_speed,
+            los_escape_ok=env._los_escape_ok(),
+            evader_position=(evader_next.x, evader_next.y, evader_next.z),
+            step_count=env.state.step_count,
+            cfg=env.term_cfg,
+            tstate=env.tstate,
+        )
+        reward_outcome = outcome
+        if outcome == EpisodeOutcome.ESCAPED:
+            # In continuous_pursuit, base-env escape is a useful signal but not
+            # an episode/phase completion event. Keep the state continuous and
+            # avoid repeatedly collecting the low-level terminal bonus before
+            # the long-horizon success check.
+            reward_outcome = EpisodeOutcome.RUNNING
+            env.tstate = TerminationState()
+        reward = compute_reward(
+            scenario="rear_close_threat",
+            prev_distance=prev_distance,
+            cur_distance=cur_distance,
+            action=(ev_accel, ev_yaw_rate, ev_pitch_rate),
+            evader_position=(evader_next.x, evader_next.y, evader_next.z),
+            pursuer_position=(pursuer_next.x, pursuer_next.y, pursuer_next.z),
+            bounds=(env.term_cfg.x_min, env.term_cfg.x_max, env.term_cfg.y_min, env.term_cfg.y_max, env.term_cfg.z_min, env.term_cfg.z_max),
+            outcome=reward_outcome,
+            prev_evader_position=prev_evader_position,
+        )
+        obs_dict = env._observation(closing_speed=closing_speed)
+        obs = self.inner._flatten_obs(obs_dict)
+        info = {
+            "outcome": outcome.value if outcome != EpisodeOutcome.ESCAPED else EpisodeOutcome.RUNNING.value,
+            "distance": cur_distance,
+            "closing_speed": closing_speed,
+            "capture_streak": env.tstate.capture_streak,
+            "escape_streak": env.tstate.escape_streak,
+        }
+        terminated = outcome in {EpisodeOutcome.CAPTURED, EpisodeOutcome.OUT_OF_BOUNDS}
+        return obs, float(reward), terminated, False, info
+
+    def _continuous_success(self) -> bool:
+        recent_distance, recent_closing = self._continuous_recent_metrics()
+        return recent_distance >= 26.0 and recent_closing <= 0.05
+
+    def _step_continuous_pursuit(self, idx: int):
+        total_reward = 0.0
+        duration_used = 0
+        terminated = False
+        truncated = False
+        info: dict[str, Any] = {"outcome": "running"}
+        obs = self.inner._flatten_obs(self.inner.inner._observation(0.0))
+        regime = self._continuous_regime()
+        regime_step_counts: dict[str, int] = {}
+
+        for _ in range(self.option_duration):
+            if self.continuous_lowlevel_steps >= self.episode_lowlevel_steps:
+                break
+            regime = self._continuous_regime()
+            self.continuous_regimes_seen.add(regime)
+            regime_step_counts[regime] = regime_step_counts.get(regime, 0) + 1
+            low_action, _ = self.low_models[idx].predict(obs, deterministic=True)
+            obs, reward, low_terminated, _, info = self._continuous_lowlevel_step(low_action, regime)
+            total_reward += float(reward) + 0.01
+            duration_used += 1
+            self.continuous_lowlevel_steps += 1
+            self.continuous_recent_distances.append(float(info.get("distance", 0.0)))
+            self.continuous_recent_closing_speeds.append(float(info.get("closing_speed", 0.0)))
+            if low_terminated:
+                terminated = True
+                break
+
+        outcome = str(info.get("outcome", "running"))
+        if not terminated and self.continuous_lowlevel_steps >= self.episode_lowlevel_steps:
+            if self._continuous_success():
+                outcome = "escaped"
+                terminated = True
+                total_reward += 25.0
+            else:
+                outcome = "timeout"
+                truncated = True
+        if self.prev_option is not None and idx != self.prev_option:
+            self.switch_count += 1
+            total_reward -= self.switch_penalty
+        self.prev_option = idx
+        self.highlevel_step_count += 1
+        info = self._continuous_info(info, outcome, regime)
+        info.update({
+            "selected_option": idx,
+            "option_duration_used": duration_used,
+            "switch_count": self.switch_count,
+            "scenario_name": CONTINUOUS_PURSUIT_SCENARIO,
+            "scenario_set": "continuous_pursuit",
+            "regime_lowlevel_steps": dict(regime_step_counts),
+            "phase_transition": False,
+            "phase_success": False,
+            "completed_phases": 0,
+            "total_phases": 0,
+        })
+        return obs, float(total_reward), bool(terminated), bool(truncated), info
+
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
         self.prev_option = None
@@ -294,6 +540,10 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.phase_failed = False
         self.phase_success_by_type = {}
         self.phase_failure_by_type = {}
+        self.continuous_lowlevel_steps = 0
+        self.continuous_recent_distances = []
+        self.continuous_recent_closing_speeds = []
+        self.continuous_regimes_seen = set()
 
         if options and "scenario_set" in options:
             self.scenario_set = str(options["scenario_set"])
@@ -315,6 +565,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             comp = requested_name or str(self.np_random.choice(list(COMPOSITE_SCENARIOS.keys())))
             self.current_scenario_name = comp
             return self._reset_composite_state(comp), {"scenario_name": comp, "scenario_set": "composite"}
+        if self.scenario_set == "continuous_pursuit":
+            return self._reset_continuous_pursuit()
 
         seq = requested_name or str(self.np_random.choice(list(SEQUENTIAL_SCENARIOS.keys())))
         self.current_scenario_name = seq
@@ -324,6 +576,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
 
     def step(self, action: int):
         idx = int(np.clip(action, 0, 3))
+        if self.scenario_set == "continuous_pursuit":
+            return self._step_continuous_pursuit(idx)
         total_reward = 0.0
         duration_used = 0
         terminated = False

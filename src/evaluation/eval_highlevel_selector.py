@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit"], default="composite")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
@@ -72,6 +72,10 @@ def main() -> None:
     parser.add_argument("--flank-threshold", type=float, default=0.65)
     parser.add_argument("--vertical-threshold", type=float, default=0.55)
     parser.add_argument("--rear-distance-threshold", type=float, default=0.09)
+    parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--regime-duration", type=int, default=60)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.25)
+    parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     args = parser.parse_args()
 
     from stable_baselines3 import PPO, SAC
@@ -96,6 +100,10 @@ def main() -> None:
         switch_penalty=args.switch_penalty,
         max_highlevel_steps=args.max_highlevel_steps,
         scenario_set=args.scenario_set,
+        episode_lowlevel_steps=args.episode_lowlevel_steps,
+        regime_duration=args.regime_duration,
+        pursuer_speed_ratio=args.pursuer_speed_ratio,
+        regime_schedule=args.regime_schedule,
     )
 
     high_model = None
@@ -119,6 +127,13 @@ def main() -> None:
     total_phases_total = 0.0
     phase_success_by_type: dict[str, int] = {}
     phase_failure_by_type: dict[str, int] = {}
+    regime_option_usage: dict[str, list[int]] = {}
+    continuous_lowlevel_steps_total = 0.0
+    final_distance_total = 0.0
+    recent_distance_total = 0.0
+    recent_closing_total = 0.0
+    regime_coverage_total = 0.0
+    timeout = 0
 
     for _ in range(args.episodes):
         obs, info = env.reset(options={"scenario_set": args.scenario_set})
@@ -171,6 +186,13 @@ def main() -> None:
             seq.append(action)
 
             obs, reward, terminated, truncated, info = env.step(action)
+            regime_name = str(info.get("regime_name", "none"))
+            if args.scenario_set == "continuous_pursuit":
+                regime_steps = dict(info.get("regime_lowlevel_steps", {regime_name: 1}))
+                for regime, step_count in regime_steps.items():
+                    regime_key = str(regime)
+                    regime_option_usage.setdefault(regime_key, [0, 0, 0, 0])
+                    regime_option_usage[regime_key][action] += int(step_count)
             ep_reward += float(reward)
             ep_steps += 1
             done = bool(terminated or truncated)
@@ -187,6 +209,11 @@ def main() -> None:
             phase_success_by_type[str(phase)] = phase_success_by_type.get(str(phase), 0) + int(count)
         for phase, count in dict(info.get("phase_failure_by_phase_type", {})).items():
             phase_failure_by_type[str(phase)] = phase_failure_by_type.get(str(phase), 0) + int(count)
+        continuous_lowlevel_steps_total += float(info.get("continuous_lowlevel_steps", 0))
+        final_distance_total += float(info.get("final_distance", 0.0))
+        recent_distance_total += float(info.get("recent_distance", 0.0))
+        recent_closing_total += float(info.get("recent_closing_speed", 0.0))
+        regime_coverage_total += float(info.get("regime_coverage_rate", 0.0))
 
         seq_key = "->".join(f"pi{a+1}" for a in seq[:6])
         scenario_sequences[scen][seq_key] += 1
@@ -197,6 +224,8 @@ def main() -> None:
             cap += 1
         elif outcome == "out_of_bounds":
             oob += 1
+        else:
+            timeout += 1
         scenario_outcomes[scen][outcome] = scenario_outcomes[scen].get(outcome, 0) + 1
 
     n = max(args.episodes, 1)
@@ -230,7 +259,19 @@ def main() -> None:
     print(f"avg_reward={total_reward / n:.3f}")
     print(f"avg_steps={total_steps / n:.3f}")
     print(f"avg_switch_count={total_switch / n:.3f}")
+    print(f"timeout_rate={timeout / n:.3f}")
     print(f"option_usage_rate={usage_rate}")
+    if args.scenario_set == "continuous_pursuit":
+        usage_by_regime = {}
+        for regime, counts in regime_option_usage.items():
+            total = max(sum(counts), 1)
+            usage_by_regime[regime] = {f"pi{i+1}": counts[i] / total for i in range(4)}
+        print(f"option_usage_by_regime={usage_by_regime}")
+        print(f"avg_episode_lowlevel_steps={continuous_lowlevel_steps_total / n:.3f}")
+        print(f"avg_final_distance={final_distance_total / n:.3f}")
+        print(f"avg_recent_distance={recent_distance_total / n:.3f}")
+        print(f"avg_recent_closing_speed={recent_closing_total / n:.3f}")
+        print(f"regime_coverage_rate={regime_coverage_total / n:.3f}")
     print(f"outcome_by_scenario={scenario_outcomes}")
     print(f"option_usage_by_scenario={usage_by_scenario}")
     print(f"avg_switch_count_by_scenario={avg_switch_by_scenario}")

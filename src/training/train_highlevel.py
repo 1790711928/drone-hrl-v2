@@ -20,7 +20,11 @@ def main() -> None:
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit"], default="composite")
+    parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--regime-duration", type=int, default=60)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.25)
+    parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     args = parser.parse_args()
 
     from stable_baselines3 import PPO, SAC
@@ -51,6 +55,10 @@ def main() -> None:
         switch_penalty=args.switch_penalty,
         max_highlevel_steps=args.max_highlevel_steps,
         scenario_set=args.scenario_set,
+        episode_lowlevel_steps=args.episode_lowlevel_steps,
+        regime_duration=args.regime_duration,
+        pursuer_speed_ratio=args.pursuer_speed_ratio,
+        regime_schedule=args.regime_schedule,
     )])
 
     model = PPO(

@@ -26,6 +26,7 @@ SUMMARY_FIELDS = (
     "switch_count",
     "option_sequence",
     "completed_phases",
+    "lowlevel_steps",
 )
 
 
@@ -62,12 +63,16 @@ class TrajectoryRecorder:
     pursuer_points: list[tuple[float, float, float]] = field(default_factory=list)
     option_switches: list[tuple[int, str]] = field(default_factory=list)
     phase_starts: list[tuple[int, str]] = field(default_factory=list)
+    regime_starts: list[tuple[int, str]] = field(default_factory=list)
+    _last_regime_name: str | None = None
     _original_inner_step: Callable[..., Any] | None = None
+    _original_continuous_lowlevel_step: Callable[..., Any] | None = None
 
     def attach(self) -> None:
         if self._original_inner_step is not None:
             return
         self._original_inner_step = self.env.inner.step
+        self._original_continuous_lowlevel_step = getattr(self.env, "_continuous_lowlevel_step", None)
 
         def recorded_step(action):
             assert self._original_inner_step is not None
@@ -75,13 +80,24 @@ class TrajectoryRecorder:
             self.append_state()
             return result
 
+        def recorded_continuous_step(action, regime):
+            assert self._original_continuous_lowlevel_step is not None
+            result = self._original_continuous_lowlevel_step(action, regime)
+            index = self.append_state()
+            self.record_regime(regime, index=index)
+            return result
+
         self.env.inner.step = recorded_step
+        if self._original_continuous_lowlevel_step is not None:
+            self.env._continuous_lowlevel_step = recorded_continuous_step
 
     def reset(self, phase_name: str) -> None:
         self.evader_points = []
         self.pursuer_points = []
         self.option_switches = []
         self.phase_starts = []
+        self.regime_starts = []
+        self._last_regime_name = None
         self.append_state()
         self.phase_starts.append((0, phase_name))
 
@@ -101,6 +117,13 @@ class TrajectoryRecorder:
         index = self.append_state()
         self.phase_starts.append((index, phase_name))
 
+    def record_regime(self, regime_name: str, *, index: int | None = None) -> None:
+        if self._last_regime_name == regime_name:
+            return
+        marker_index = len(self.evader_points) - 1 if index is None else index
+        self.regime_starts.append((marker_index, regime_name))
+        self._last_regime_name = regime_name
+
 
 @dataclass
 class EpisodePlotData:
@@ -116,6 +139,8 @@ class EpisodePlotData:
     pursuer_points: list[tuple[float, float, float]]
     option_switches: list[tuple[int, str]]
     phase_starts: list[tuple[int, str]]
+    regime_starts: list[tuple[int, str]]
+    lowlevel_steps: int
 
     def summary_row(self) -> dict[str, Any]:
         return {
@@ -127,6 +152,7 @@ class EpisodePlotData:
             "switch_count": self.switch_count,
             "option_sequence": "->".join(OPTION_NAMES[index] for index in self.option_sequence),
             "completed_phases": self.completed_phases,
+            "lowlevel_steps": self.lowlevel_steps,
         }
 
 
@@ -147,6 +173,8 @@ def rollout_episode(
     obs, info = env.reset(options=reset_options)
     scenario = str(info.get("scenario_name", "unknown"))
     recorder.reset(str(info.get("phase_name", "start")))
+    if scenario_set == "continuous_pursuit":
+        recorder.record_regime(str(info.get("regime_name", "start")), index=0)
     actions: list[int] = []
     previous_option: int | None = None
     outcome = "timeout"
@@ -183,6 +211,8 @@ def rollout_episode(
         pursuer_points=list(recorder.pursuer_points),
         option_switches=list(recorder.option_switches),
         phase_starts=list(recorder.phase_starts),
+        regime_starts=list(recorder.regime_starts),
+        lowlevel_steps=int(info.get("continuous_lowlevel_steps", 0)),
     )
 
 
@@ -242,14 +272,19 @@ def save_plot(
 
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
-    segments = trajectory_segments(episode.phase_starts, len(episode.evader_points)) if break_at_phase_transition else [(0, len(episode.evader_points) - 1, "all")]
+    is_continuous = episode.scenario == "continuous_pursuit"
+    segments = (
+        trajectory_segments(episode.phase_starts, len(episode.evader_points))
+        if break_at_phase_transition and not is_continuous
+        else [(0, len(episode.evader_points) - 1, "all")]
+    )
     for segment_index, (start, end, _) in enumerate(segments):
         evader_segment = episode.evader_points[start : end + 1]
         pursuer_segment = episode.pursuer_points[start : end + 1]
         _plot_segment(ax, evader_segment, color="tab:blue", linestyle="-", linewidth=2.0, label="evader" if segment_index == 0 else None)
         _plot_segment(ax, pursuer_segment, color="tab:red", linestyle="--", linewidth=1.6, label="pursuer" if segment_index == 0 else None)
 
-    if break_at_phase_transition and show_phase_reset_jump:
+    if break_at_phase_transition and show_phase_reset_jump and not is_continuous:
         for jump_index, (end_index, start_index) in enumerate(phase_reset_jumps(segments)):
             evader_jump = [episode.evader_points[end_index], episode.evader_points[start_index]]
             pursuer_jump = [episode.pursuer_points[end_index], episode.pursuer_points[start_index]]
@@ -274,6 +309,10 @@ def save_plot(
         x, y, z = episode.evader_points[marker_index]
         ax.scatter(x, y, z, color="tab:orange", marker="^", s=45)
         ax.text(x, y, z, f" {option_name}", color="darkorange", fontsize=8)
+    for marker_index, regime_name in episode.regime_starts:
+        x, y, z = episode.evader_points[marker_index]
+        ax.scatter(x, y, z, color="tab:cyan", marker="s", s=40)
+        ax.text(x, y, z, f" regime:{regime_name}", color="teal", fontsize=8)
 
     x_min, x_max, y_min, y_max, z_min, z_max = bounds
     ax.set_xlim(x_min, x_max)
@@ -282,7 +321,10 @@ def save_plot(
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
-    title_suffix = "phase-based sequential rollout" if showcase_mode == "phase_based" else "continuous showcase requested (not benchmark)"
+    if is_continuous:
+        title_suffix = f"continuous_pursuit rollout | lowlevel_steps={episode.lowlevel_steps}"
+    else:
+        title_suffix = "phase-based sequential rollout" if showcase_mode == "phase_based" else "continuous showcase requested (not benchmark)"
     ax.set_title(
         f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | "
         f"switch_count={episode.switch_count}\n{title_suffix}"
@@ -300,7 +342,7 @@ def save_plot(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot high-level option trajectories for presentation")
     parser.add_argument("--mode", choices=["highlevel", "fixed"], default="highlevel")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential"], default="sequential")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit"], default="sequential")
     parser.add_argument("--scenario-name", default=None)
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--fixed-policy", type=int, choices=range(4), default=2)
@@ -319,6 +361,10 @@ def main() -> None:
     parser.add_argument("--break-at-phase-transition", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--show-phase-reset-jump", action="store_true")
     parser.add_argument("--showcase-mode", choices=["phase_based", "continuous"], default="phase_based")
+    parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--regime-duration", type=int, default=60)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.25)
+    parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     args = parser.parse_args()
 
     if args.episodes <= 0:
@@ -326,7 +372,7 @@ def main() -> None:
     if args.max_plots <= 0:
         parser.error("--max-plots must be positive")
     if args.showcase_mode == "continuous":
-        print("showcase-mode=continuous is reserved for future continuous showcase scenarios; current plots still use benchmark rollouts.")
+        print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
     if importlib.util.find_spec("matplotlib") is None:
         print("matplotlib is not installed. Please install matplotlib to save high-level trajectory plots.")
         return
@@ -354,6 +400,10 @@ def main() -> None:
         switch_penalty=args.switch_penalty,
         max_highlevel_steps=args.max_highlevel_steps,
         scenario_set=args.scenario_set,
+        episode_lowlevel_steps=args.episode_lowlevel_steps,
+        regime_duration=args.regime_duration,
+        pursuer_speed_ratio=args.pursuer_speed_ratio,
+        regime_schedule=args.regime_schedule,
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()

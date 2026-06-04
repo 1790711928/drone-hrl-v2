@@ -272,9 +272,18 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 
 高层 PPO 目标不是识别 S1/S2/S3/S4 标签，而是在复合威胁中学习 option 选择与切换。
 
-`--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）、`sequential`（单个 episode 内按阶段注入 rear/flank/boundary/vertical 威胁）。
+`--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）、`sequential`（单个 episode 内按阶段注入 rear/flank/boundary/vertical 威胁）、`continuous_pursuit`（连续动态追逃，不做 phase teleport，不把 regime label 加入 observation）。
 
 `sequential` 用于验证真正的 option 切换：基础环境的中间 escape 不会自动完成 phase。每个 rear/flank/boundary/vertical phase 必须连续满足专属 geometry 条件后，环境才会注入下一阶段威胁；只有所有 phase 完成后才算最终 escaped。phase 名称、成功 streak 与失败统计仅写入 `info`，不会加入 observation。
+
+`continuous_pursuit` 用于最终连续追逃压力测试：evader 状态保持连续，regime 仅控制 pursuer 的施压方式（rear/flank/vertical/boundary），不再用“完成固定 phase”作为成功条件。episode 到达 `--episode-lowlevel-steps` 后，只有未被捕获/未越界且最近窗口保持安全距离与非持续闭合，才判为 escaped；否则为 timeout。
+
+连续追逃诊断与评估示例：
+```powershell
+python -m src.evaluation.inspect_continuous_pursuit --episodes 1 --episode-lowlevel-steps 120
+python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 2 --episodes 2 --scenario-set continuous_pursuit --episode-lowlevel-steps 120
+python -m src.evaluation.eval_highlevel_selector --mode highlevel --episodes 2 --scenario-set continuous_pursuit --high-model outputs/checkpoints/ppo_highlevel_switch.zip --episode-lowlevel-steps 120
+```
 
 在训练高层 PPO 前，建议优先运行 one-shot phase × option 区分度诊断：
 ```powershell
@@ -307,9 +316,14 @@ python -m src.evaluation.plot_highlevel_trajectories --mode highlevel --scenario
 python -m src.evaluation.plot_highlevel_trajectories --mode fixed --fixed-policy 2 --scenario-set sequential --scenario-name sequential_rear_vertical_to_boundary --episodes 20 --only-failure --max-plots 5 --break-at-phase-transition
 ```
 
-`plot_highlevel_trajectories.py` 会保存逃跑方与追击方的 3D 轨迹、起终点、phase 起点和 option 切换标记。PNG 与被绘图 episode 的 summary CSV 默认写入 `outputs/evaluation/highlevel_traj_plots/`。脚本优先保留 high-level 成功轨迹、fixed pi3 失败轨迹，并特别关注 `sequential_rear_vertical_to_boundary`。
+`plot_highlevel_trajectories.py` 会保存逃跑方与追击方的 3D 轨迹、起终点、phase 起点、option 切换标记；在 `continuous_pursuit` 下还会标注 regime 切换点和 low-level step 数。PNG 与被绘图 episode 的 summary CSV 默认写入 `outputs/evaluation/highlevel_traj_plots/`。脚本优先保留 high-level 成功轨迹、fixed pi3 失败轨迹，并特别关注 `sequential_rear_vertical_to_boundary`。
 
-注意：当前 sequential 图是 **phase-based benchmark rollout**，phase transition 会注入下一阶段状态，不是完全连续物理追逐。脚本默认 `--break-at-phase-transition`，每个 phase 单独画线，避免把 reset jump 误画成长直线；如需展示跳转，可加 `--show-phase-reset-jump`，它会用灰色虚线标注 `phase reset jump (not physical)`。`--one-per-scenario` 与 `--one-per-option-sequence` 可减少重复图。`--showcase-mode continuous` 仅预留接口；如需长时间自然追逐图，应另行构建 continuous showcase scenario 并重新评估，不应修改当前 benchmark 图来伪造连续轨迹。
+注意：当前 sequential 图是 **phase-based benchmark rollout**，phase transition 会注入下一阶段状态，不是完全连续物理追逐。脚本默认 `--break-at-phase-transition`，每个 phase 单独画线，避免把 reset jump 误画成长直线；如需展示跳转，可加 `--show-phase-reset-jump`，它会用灰色虚线标注 `phase reset jump (not physical)`。`continuous_pursuit` 图不需要 phase 断线，因为 evader 不会在 regime 切换时 teleport。`--one-per-scenario` 与 `--one-per-option-sequence` 可减少重复图。`--showcase-mode continuous` 仍只是展示接口；不要通过插值或平滑伪造跨 phase 的连续轨迹。
+
+连续追逃轨迹示例：
+```powershell
+python -m src.evaluation.plot_highlevel_trajectories --mode highlevel --scenario-set continuous_pursuit --episodes 2 --high-model outputs/checkpoints/ppo_highlevel_switch.zip --max-plots 1
+```
 
 ### 6.9 冻结低层后训练上层 PPO 切换器
 ```powershell

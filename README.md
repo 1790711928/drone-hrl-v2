@@ -276,13 +276,14 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 
 `sequential` 用于验证真正的 option 切换：基础环境的中间 escape 不会自动完成 phase。每个 rear/flank/boundary/vertical phase 必须连续满足专属 geometry 条件后，环境才会注入下一阶段威胁；只有所有 phase 完成后才算最终 escaped。phase 名称、成功 streak 与失败统计仅写入 `info`，不会加入 observation。
 
-`continuous_pursuit` 用于最终连续追逃压力测试：evader 状态保持连续，regime 仅控制 pursuer 的施压方式（rear/flank/vertical/boundary），不再用“完成固定 phase”作为成功条件。episode 到达 `--episode-lowlevel-steps` 后，只有未被捕获/未越界且最近窗口保持安全距离与非持续闭合，才判为 escaped；否则为 timeout。
+`continuous_pursuit` 用于最终连续追逃压力测试：evader 状态保持连续，regime 仅控制 pursuer 的施压方式（rear/flank/vertical/boundary），不再用“完成固定 phase”作为成功条件。当前 regime 由 state-driven threat manager 根据 observation geometry 实时选择：边界风险优先，其次按 rear/flank/vertical 威胁分数判断；固定 schedule 只在威胁分数都较低时作为 fallback。episode 到达 `--episode-lowlevel-steps` 后，只有未被捕获/未越界且最近窗口保持安全距离与非持续闭合，才判为 escaped；否则为 timeout。
 
 连续追逃诊断与评估示例：
 ```powershell
 python -m src.evaluation.inspect_continuous_pursuit --episodes 1 --episode-lowlevel-steps 120
 python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 2 --episodes 2 --scenario-set continuous_pursuit --episode-lowlevel-steps 120
 python -m src.evaluation.eval_highlevel_selector --mode highlevel --episodes 2 --scenario-set continuous_pursuit --high-model outputs/checkpoints/ppo_highlevel_switch.zip --episode-lowlevel-steps 120
+# 可用 --min-regime-hold-steps / --regime-schedule / --pursuer-speed-ratio 调整连续追逃诊断强度；默认 pursuer-speed-ratio=1.20。
 ```
 
 在训练高层 PPO 前，建议优先运行 one-shot phase × option 区分度诊断：

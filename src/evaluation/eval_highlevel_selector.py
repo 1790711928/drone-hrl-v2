@@ -74,8 +74,9 @@ def main() -> None:
     parser.add_argument("--rear-distance-threshold", type=float, default=0.09)
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
-    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.25)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
+    parser.add_argument("--min-regime-hold-steps", type=int, default=20)
     args = parser.parse_args()
 
     from stable_baselines3 import PPO, SAC
@@ -104,6 +105,7 @@ def main() -> None:
         regime_duration=args.regime_duration,
         pursuer_speed_ratio=args.pursuer_speed_ratio,
         regime_schedule=args.regime_schedule,
+        min_regime_hold_steps=args.min_regime_hold_steps,
     )
 
     high_model = None
@@ -128,11 +130,14 @@ def main() -> None:
     phase_success_by_type: dict[str, int] = {}
     phase_failure_by_type: dict[str, int] = {}
     regime_option_usage: dict[str, list[int]] = {}
+    scheduled_regime_option_usage: dict[str, list[int]] = {}
     continuous_lowlevel_steps_total = 0.0
     final_distance_total = 0.0
     recent_distance_total = 0.0
     recent_closing_total = 0.0
     regime_coverage_total = 0.0
+    boundary_priority_rate_total = 0.0
+    state_driven_switch_total = 0.0
     timeout = 0
 
     for _ in range(args.episodes):
@@ -193,6 +198,11 @@ def main() -> None:
                     regime_key = str(regime)
                     regime_option_usage.setdefault(regime_key, [0, 0, 0, 0])
                     regime_option_usage[regime_key][action] += int(step_count)
+                scheduled_steps = dict(info.get("scheduled_regime_lowlevel_steps", {}))
+                for scheduled_regime, step_count in scheduled_steps.items():
+                    scheduled_key = str(scheduled_regime)
+                    scheduled_regime_option_usage.setdefault(scheduled_key, [0, 0, 0, 0])
+                    scheduled_regime_option_usage[scheduled_key][action] += int(step_count)
             ep_reward += float(reward)
             ep_steps += 1
             done = bool(terminated or truncated)
@@ -214,6 +224,8 @@ def main() -> None:
         recent_distance_total += float(info.get("recent_distance", 0.0))
         recent_closing_total += float(info.get("recent_closing_speed", 0.0))
         regime_coverage_total += float(info.get("regime_coverage_rate", 0.0))
+        boundary_priority_rate_total += float(info.get("boundary_priority_rate", 0.0))
+        state_driven_switch_total += float(info.get("state_driven_regime_switch_count", 0.0))
 
         seq_key = "->".join(f"pi{a+1}" for a in seq[:6])
         scenario_sequences[scen][seq_key] += 1
@@ -267,11 +279,18 @@ def main() -> None:
             total = max(sum(counts), 1)
             usage_by_regime[regime] = {f"pi{i+1}": counts[i] / total for i in range(4)}
         print(f"option_usage_by_regime={usage_by_regime}")
+        usage_by_scheduled_regime = {}
+        for regime, counts in scheduled_regime_option_usage.items():
+            total = max(sum(counts), 1)
+            usage_by_scheduled_regime[regime] = {f"pi{i+1}": counts[i] / total for i in range(4)}
+        print(f"option_usage_by_scheduled_regime={usage_by_scheduled_regime}")
         print(f"avg_episode_lowlevel_steps={continuous_lowlevel_steps_total / n:.3f}")
         print(f"avg_final_distance={final_distance_total / n:.3f}")
         print(f"avg_recent_distance={recent_distance_total / n:.3f}")
         print(f"avg_recent_closing_speed={recent_closing_total / n:.3f}")
         print(f"regime_coverage_rate={regime_coverage_total / n:.3f}")
+        print(f"boundary_priority_rate={boundary_priority_rate_total / n:.3f}")
+        print(f"state_driven_regime_switch_count={state_driven_switch_total / n:.3f}")
     print(f"outcome_by_scenario={scenario_outcomes}")
     print(f"option_usage_by_scenario={usage_by_scenario}")
     print(f"avg_switch_count_by_scenario={avg_switch_by_scenario}")

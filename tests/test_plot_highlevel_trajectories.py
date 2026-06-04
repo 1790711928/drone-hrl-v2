@@ -32,6 +32,7 @@ def episode(*, mode="fixed", success=False, scenario="sequential_rear_to_boundar
         option_switches=[(0, "pi3")],
         phase_starts=[(0, "rear")],
         regime_starts=[],
+        boundary_priority_points=[],
         lowlevel_steps=0,
     )
 

@@ -23,8 +23,9 @@ def main() -> None:
     parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit"], default="composite")
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
-    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.25)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
+    parser.add_argument("--min-regime-hold-steps", type=int, default=20)
     args = parser.parse_args()
 
     from stable_baselines3 import PPO, SAC
@@ -59,6 +60,7 @@ def main() -> None:
         regime_duration=args.regime_duration,
         pursuer_speed_ratio=args.pursuer_speed_ratio,
         regime_schedule=args.regime_schedule,
+        min_regime_hold_steps=args.min_regime_hold_steps,
     )])
 
     model = PPO(

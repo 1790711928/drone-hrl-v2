@@ -64,6 +64,7 @@ class TrajectoryRecorder:
     option_switches: list[tuple[int, str]] = field(default_factory=list)
     phase_starts: list[tuple[int, str]] = field(default_factory=list)
     regime_starts: list[tuple[int, str]] = field(default_factory=list)
+    boundary_priority_points: list[int] = field(default_factory=list)
     _last_regime_name: str | None = None
     _original_inner_step: Callable[..., Any] | None = None
     _original_continuous_lowlevel_step: Callable[..., Any] | None = None
@@ -85,6 +86,8 @@ class TrajectoryRecorder:
             result = self._original_continuous_lowlevel_step(action, regime)
             index = self.append_state()
             self.record_regime(regime, index=index)
+            if bool(getattr(self.env, "continuous_last_regime_info", {}).get("boundary_priority_active", False)):
+                self.boundary_priority_points.append(index)
             return result
 
         self.env.inner.step = recorded_step
@@ -97,6 +100,7 @@ class TrajectoryRecorder:
         self.option_switches = []
         self.phase_starts = []
         self.regime_starts = []
+        self.boundary_priority_points = []
         self._last_regime_name = None
         self.append_state()
         self.phase_starts.append((0, phase_name))
@@ -140,6 +144,7 @@ class EpisodePlotData:
     option_switches: list[tuple[int, str]]
     phase_starts: list[tuple[int, str]]
     regime_starts: list[tuple[int, str]]
+    boundary_priority_points: list[int]
     lowlevel_steps: int
 
     def summary_row(self) -> dict[str, Any]:
@@ -212,6 +217,7 @@ def rollout_episode(
         option_switches=list(recorder.option_switches),
         phase_starts=list(recorder.phase_starts),
         regime_starts=list(recorder.regime_starts),
+        boundary_priority_points=list(recorder.boundary_priority_points),
         lowlevel_steps=int(info.get("continuous_lowlevel_steps", 0)),
     )
 
@@ -313,6 +319,10 @@ def save_plot(
         x, y, z = episode.evader_points[marker_index]
         ax.scatter(x, y, z, color="tab:cyan", marker="s", s=40)
         ax.text(x, y, z, f" regime:{regime_name}", color="teal", fontsize=8)
+    for marker_index in episode.boundary_priority_points:
+        x, y, z = episode.evader_points[marker_index]
+        ax.scatter(x, y, z, color="crimson", marker="*", s=75)
+        ax.text(x, y, z, " boundary priority", color="crimson", fontsize=8)
 
     x_min, x_max, y_min, y_max, z_min, z_max = bounds
     ax.set_xlim(x_min, x_max)
@@ -363,8 +373,9 @@ def main() -> None:
     parser.add_argument("--showcase-mode", choices=["phase_based", "continuous"], default="phase_based")
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
-    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.25)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
+    parser.add_argument("--min-regime-hold-steps", type=int, default=20)
     args = parser.parse_args()
 
     if args.episodes <= 0:
@@ -404,6 +415,7 @@ def main() -> None:
         regime_duration=args.regime_duration,
         pursuer_speed_ratio=args.pursuer_speed_ratio,
         regime_schedule=args.regime_schedule,
+        min_regime_hold_steps=args.min_regime_hold_steps,
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()

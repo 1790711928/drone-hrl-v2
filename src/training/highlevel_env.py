@@ -189,8 +189,9 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         scenario_set: str = "mixed",
         episode_lowlevel_steps: int = 400,
         regime_duration: int = 60,
-        pursuer_speed_ratio: float = 1.25,
+        pursuer_speed_ratio: float = 1.20,
         regime_schedule: str | tuple[str, ...] = DEFAULT_REGIME_SCHEDULE,
+        min_regime_hold_steps: int = 20,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -201,6 +202,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.episode_lowlevel_steps = episode_lowlevel_steps
         self.regime_duration = regime_duration
         self.continuous_pursuer_speed_ratio = pursuer_speed_ratio
+        self.min_regime_hold_steps = min_regime_hold_steps
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -229,6 +231,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_recent_distances: list[float] = []
         self.continuous_recent_closing_speeds: list[float] = []
         self.continuous_regimes_seen: set[str] = set()
+        self.continuous_active_regime: str | None = None
+        self.continuous_last_regime_switch_step = 0
+        self.continuous_regime_switch_count = 0
+        self.continuous_boundary_priority_steps = 0
+        self.continuous_state_driven_steps = 0
+        self.continuous_last_regime_info: dict[str, Any] = {}
 
     def _sample_basic(self) -> str:
         return str(self.np_random.choice(BASIC_SCENARIOS))
@@ -313,9 +321,88 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "phase_failure_by_phase_type": dict(self.phase_failure_by_type),
         }
 
-    def _continuous_regime(self) -> str:
+    def _continuous_scheduled_regime(self) -> str:
         index = self.continuous_lowlevel_steps // max(self.regime_duration, 1)
         return self.regime_schedule[index % len(self.regime_schedule)]
+
+    def _continuous_regime(self) -> str:
+        return self.continuous_active_regime or self._continuous_scheduled_regime()
+
+    @staticmethod
+    def _clamp01(value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    def _continuous_threat_scores(self, obs: dict[str, float], closing_speed: float) -> dict[str, float]:
+        min_margin = float(obs["min_boundary_margin"])
+        z_margin = float(obs["boundary_margin_z"])
+        distance = float(obs["distance"])
+        boundary_score = self._clamp01((0.36 - min_margin) / 0.22)
+        if min_margin < 0.20:
+            boundary_score += 0.80
+        elif min_margin < 0.24:
+            boundary_score += 0.55
+        elif min_margin >= 0.28:
+            boundary_score *= 0.35
+
+        rear_pressure = self._clamp01(-float(obs["threat_forward"]))
+        closing_term = self._clamp01(max(0.0, closing_speed) / 0.25)
+        near_term = self._clamp01((0.14 - distance) / 0.14)
+        rear_score = 0.55 * rear_pressure + 0.30 * closing_term + 0.15 * near_term
+
+        flank_score = self._clamp01(abs(float(obs["threat_right"])))
+
+        vertical_geometry = self._clamp01(abs(float(obs["threat_up"])))
+        vertical_sep = self._clamp01(abs(float(obs["dz"])) / 0.22)
+        vertical_score = 0.70 * vertical_geometry + 0.30 * vertical_sep
+        if z_margin < 0.22 and min_margin < 0.24:
+            vertical_score *= 0.55
+
+        return {
+            "boundary": float(boundary_score),
+            "rear": float(rear_score),
+            "flank": float(flank_score),
+            "vertical": float(vertical_score),
+        }
+
+    def _continuous_regime_from_state(self, obs: dict[str, float], closing_speed: float) -> tuple[str, dict[str, Any]]:
+        scheduled = self._continuous_scheduled_regime()
+        scores = self._continuous_threat_scores(obs, closing_speed)
+        min_margin = float(obs["min_boundary_margin"])
+        boundary_priority = min_margin < 0.24 or scores["boundary"] >= 1.0
+        best_regime = max(scores, key=scores.get)
+        best_score = scores[best_regime]
+        state_driven_active = boundary_priority or best_score >= 0.55
+        candidate = "boundary" if boundary_priority else (best_regime if state_driven_active else scheduled)
+
+        current = self.continuous_active_regime
+        hold_steps = self.continuous_lowlevel_steps - self.continuous_last_regime_switch_step
+        if current is not None and candidate != current and not boundary_priority and hold_steps < self.min_regime_hold_steps:
+            current_score = scores.get(current, 0.0)
+            if best_score <= current_score + 0.18:
+                candidate = current
+
+        if current is None:
+            self.continuous_active_regime = candidate
+            self.continuous_last_regime_switch_step = self.continuous_lowlevel_steps
+        elif candidate != current:
+            self.continuous_active_regime = candidate
+            self.continuous_last_regime_switch_step = self.continuous_lowlevel_steps
+            self.continuous_regime_switch_count += 1
+
+        actual = self.continuous_active_regime or candidate
+        info = {
+            "scheduled_regime": scheduled,
+            "regime_name": actual,
+            "threat_scores": scores,
+            "state_driven_regime_active": bool(state_driven_active),
+            "boundary_priority_active": bool(boundary_priority),
+            "min_boundary_margin": min_margin,
+            "distance": float(obs["distance"]),
+            "closing_speed": float(closing_speed),
+            "state_driven_regime_switch_count": self.continuous_regime_switch_count,
+        }
+        self.continuous_last_regime_info = dict(info)
+        return actual, info
 
     def _continuous_pursuer_target(self, evader: Agent3DState, regime: str) -> Agent3DState:
         forward, right, up = _body_axes(evader)
@@ -347,15 +434,23 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_recent_distances = []
         self.continuous_recent_closing_speeds = []
         self.continuous_regimes_seen = set()
+        self.continuous_active_regime = None
+        self.continuous_last_regime_switch_step = 0
+        self.continuous_regime_switch_count = 0
+        self.continuous_boundary_priority_steps = 0
+        self.continuous_state_driven_steps = 0
+        self.continuous_last_regime_info = {}
         obs = self._set_inner_state(CONTINUOUS_START_STATE, "rear_close_threat")
-        regime = self._continuous_regime()
+        obs_dict = self.inner.inner._observation(closing_speed=0.0)
+        regime, regime_info = self._continuous_regime_from_state(obs_dict, 0.0)
         self.continuous_regimes_seen.add(regime)
         return obs, {
             "scenario_name": CONTINUOUS_PURSUIT_SCENARIO,
             "scenario_set": "continuous_pursuit",
-            "regime_name": regime,
+            **regime_info,
             "continuous_lowlevel_steps": 0,
             "regime_coverage_rate": len(self.continuous_regimes_seen) / len(set(self.regime_schedule)),
+            "boundary_priority_rate": 0.0,
         }
 
     def _continuous_recent_metrics(self) -> tuple[float, float]:
@@ -381,6 +476,9 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "recent_distance": recent_distance,
             "recent_closing_speed": recent_closing,
             "regime_coverage_rate": len(self.continuous_regimes_seen) / max(len(set(self.regime_schedule)), 1),
+            "boundary_priority_rate": self.continuous_boundary_priority_steps / max(self.continuous_lowlevel_steps, 1),
+            "state_driven_regime_rate": self.continuous_state_driven_steps / max(self.continuous_lowlevel_steps, 1),
+            "state_driven_regime_switch_count": self.continuous_regime_switch_count,
         })
         return info
 
@@ -478,14 +576,23 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         info: dict[str, Any] = {"outcome": "running"}
         obs = self.inner._flatten_obs(self.inner.inner._observation(0.0))
         regime = self._continuous_regime()
+        regime_info: dict[str, Any] = {"scheduled_regime": self._continuous_scheduled_regime(), "threat_scores": {}}
         regime_step_counts: dict[str, int] = {}
+        scheduled_regime_step_counts: dict[str, int] = {}
 
         for _ in range(self.option_duration):
             if self.continuous_lowlevel_steps >= self.episode_lowlevel_steps:
                 break
-            regime = self._continuous_regime()
+            current_obs = self.inner.inner._observation(float(info.get("closing_speed", 0.0)))
+            regime, regime_info = self._continuous_regime_from_state(current_obs, float(info.get("closing_speed", 0.0)))
             self.continuous_regimes_seen.add(regime)
             regime_step_counts[regime] = regime_step_counts.get(regime, 0) + 1
+            scheduled = str(regime_info.get("scheduled_regime", self._continuous_scheduled_regime()))
+            scheduled_regime_step_counts[scheduled] = scheduled_regime_step_counts.get(scheduled, 0) + 1
+            if regime_info.get("boundary_priority_active"):
+                self.continuous_boundary_priority_steps += 1
+            if regime_info.get("state_driven_regime_active"):
+                self.continuous_state_driven_steps += 1
             low_action, _ = self.low_models[idx].predict(obs, deterministic=True)
             obs, reward, low_terminated, _, info = self._continuous_lowlevel_step(low_action, regime)
             total_reward += float(reward) + 0.01
@@ -512,6 +619,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.prev_option = idx
         self.highlevel_step_count += 1
         info = self._continuous_info(info, outcome, regime)
+        info.update(regime_info)
         info.update({
             "selected_option": idx,
             "option_duration_used": duration_used,
@@ -519,6 +627,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "scenario_name": CONTINUOUS_PURSUIT_SCENARIO,
             "scenario_set": "continuous_pursuit",
             "regime_lowlevel_steps": dict(regime_step_counts),
+            "scheduled_regime_lowlevel_steps": dict(scheduled_regime_step_counts),
             "phase_transition": False,
             "phase_success": False,
             "completed_phases": 0,
@@ -544,6 +653,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_recent_distances = []
         self.continuous_recent_closing_speeds = []
         self.continuous_regimes_seen = set()
+        self.continuous_active_regime = None
+        self.continuous_last_regime_switch_step = 0
+        self.continuous_regime_switch_count = 0
+        self.continuous_boundary_priority_steps = 0
+        self.continuous_state_driven_steps = 0
+        self.continuous_last_regime_info = {}
 
         if options and "scenario_set" in options:
             self.scenario_set = str(options["scenario_set"])

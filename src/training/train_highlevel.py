@@ -20,7 +20,7 @@ def main() -> None:
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase"], default="composite")
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
@@ -28,6 +28,8 @@ def main() -> None:
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
     parser.add_argument("--boundary-priority-enter", type=float, default=0.24)
     parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
+    parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
+    parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
 
     from stable_baselines3 import PPO, SAC
@@ -65,6 +67,8 @@ def main() -> None:
         min_regime_hold_steps=args.min_regime_hold_steps,
         boundary_priority_enter=args.boundary_priority_enter,
         boundary_priority_exit=args.boundary_priority_exit,
+        showcase_bound_scale=args.showcase_bound_scale,
+        showcase_z_bound_scale=args.showcase_z_bound_scale,
     )])
 
     model = PPO(

@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import csv
 import importlib.util
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from src.training.highlevel_env import HighLevelOptionEnv
+from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, HighLevelOptionEnv
 
 
 OPTION_NAMES = ("pi1", "pi2", "pi3", "pi4")
@@ -178,7 +179,7 @@ def rollout_episode(
     obs, info = env.reset(options=reset_options)
     scenario = str(info.get("scenario_name", "unknown"))
     recorder.reset(str(info.get("phase_name", "start")))
-    if scenario_set == "continuous_pursuit":
+    if scenario_set in CONTINUOUS_SCENARIO_SETS:
         recorder.record_regime(str(info.get("regime_name", "start")), index=0)
     actions: list[int] = []
     previous_option: int | None = None
@@ -187,6 +188,25 @@ def rollout_episode(
     while True:
         if mode == "fixed":
             option = fixed_policy
+        elif mode == "random":
+            option = random.randint(0, 3)
+        elif mode == "regime_oracle":
+            option = {"rear": 0, "flank": 1, "boundary": 2, "vertical": 3}.get(str(info.get("regime_name", "rear")), 2)
+        elif mode == "continuous_heuristic":
+            regime = str(info.get("regime_name", "rear"))
+            min_margin = float(info.get("min_boundary_margin", 1.0))
+            boundary_enter = float(info.get("boundary_priority_enter", 0.24))
+            boundary_active = bool(info.get("boundary_priority_active", False))
+            if min_margin <= boundary_enter or boundary_active or regime == "boundary":
+                option = 2
+            elif regime == "flank":
+                option = 1
+            elif regime == "vertical":
+                option = 3
+            elif regime == "rear":
+                option = 0
+            else:
+                option = 2
         else:
             assert high_model is not None
             prediction, _ = high_model.predict(obs, deterministic=True)
@@ -278,7 +298,7 @@ def save_plot(
 
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
-    is_continuous = episode.scenario == "continuous_pursuit"
+    is_continuous = episode.scenario in CONTINUOUS_SCENARIO_SETS
     segments = (
         trajectory_segments(episode.phase_starts, len(episode.evader_points))
         if break_at_phase_transition and not is_continuous
@@ -332,7 +352,7 @@ def save_plot(
     ax.set_ylabel("y")
     ax.set_zlabel("z")
     if is_continuous:
-        title_suffix = f"continuous_pursuit rollout | lowlevel_steps={episode.lowlevel_steps}"
+        title_suffix = f"{episode.scenario} rollout | lowlevel_steps={episode.lowlevel_steps}"
     else:
         title_suffix = "phase-based sequential rollout" if showcase_mode == "phase_based" else "continuous showcase requested (not benchmark)"
     ax.set_title(
@@ -351,8 +371,8 @@ def save_plot(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot high-level option trajectories for presentation")
-    parser.add_argument("--mode", choices=["highlevel", "fixed"], default="highlevel")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit"], default="sequential")
+    parser.add_argument("--mode", choices=["highlevel", "fixed", "random", "continuous_heuristic", "regime_oracle"], default="highlevel")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase"], default="sequential")
     parser.add_argument("--scenario-name", default=None)
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--fixed-policy", type=int, choices=range(4), default=2)
@@ -378,7 +398,11 @@ def main() -> None:
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
     parser.add_argument("--boundary-priority-enter", type=float, default=0.24)
     parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
+    parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
+    parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
+    if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
+        args.episode_lowlevel_steps = 500
 
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
@@ -386,6 +410,8 @@ def main() -> None:
         parser.error("--max-plots must be positive")
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
+    if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
+        parser.error(f"--mode {args.mode} requires --scenario-set continuous_pursuit or continuous_showcase")
     if importlib.util.find_spec("matplotlib") is None:
         print("matplotlib is not installed. Please install matplotlib to save high-level trajectory plots.")
         return
@@ -420,6 +446,8 @@ def main() -> None:
         min_regime_hold_steps=args.min_regime_hold_steps,
         boundary_priority_enter=args.boundary_priority_enter,
         boundary_priority_exit=args.boundary_priority_exit,
+        showcase_bound_scale=args.showcase_bound_scale,
+        showcase_z_bound_scale=args.showcase_z_bound_scale,
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()

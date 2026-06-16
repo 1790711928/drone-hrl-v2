@@ -156,10 +156,17 @@ def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState
 
 
 CONTINUOUS_PURSUIT_SCENARIO = "continuous_pursuit"
+CONTINUOUS_SHOWCASE_SCENARIO = "continuous_showcase"
+CONTINUOUS_SCENARIO_SETS = {CONTINUOUS_PURSUIT_SCENARIO, CONTINUOUS_SHOWCASE_SCENARIO}
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
 CONTINUOUS_START_STATE = Env3DState(
     evader=Agent3DState(x=-5.0, y=0.0, z=14.0, speed=9.5, yaw=0.80, pitch=0.01),
     pursuer=Agent3DState(x=-18.0, y=-12.5, z=10.5, speed=11.0, yaw=0.80, pitch=0.03),
+    step_count=0,
+)
+SHOWCASE_START_STATE = Env3DState(
+    evader=Agent3DState(x=0.0, y=0.0, z=37.0, speed=9.5, yaw=0.55, pitch=0.01),
+    pursuer=Agent3DState(x=-16.0, y=-9.0, z=33.0, speed=11.0, yaw=0.55, pitch=0.03),
     step_count=0,
 )
 
@@ -194,6 +201,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         min_regime_hold_steps: int = 20,
         boundary_priority_enter: float = 0.24,
         boundary_priority_exit: float = 0.32,
+        showcase_bound_scale: float = 2.5,
+        showcase_z_bound_scale: float = 1.5,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -207,6 +216,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.min_regime_hold_steps = min_regime_hold_steps
         self.boundary_priority_enter = boundary_priority_enter
         self.boundary_priority_exit = boundary_priority_exit
+        self.showcase_bound_scale = showcase_bound_scale
+        self.showcase_z_bound_scale = showcase_z_bound_scale
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -215,6 +226,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             self.regime_schedule = DEFAULT_REGIME_SCHEDULE
 
         self.inner = PursuitEscapeGymEnv(scenario="rear_close_threat")
+        self._base_term_cfg = replace(self.inner.inner.term_cfg)
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.inner.observation_space
 
@@ -242,6 +254,23 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info: dict[str, Any] = {}
+
+    def _use_base_bounds(self) -> None:
+        self.inner.inner.term_cfg = replace(self._base_term_cfg)
+
+    def _use_showcase_bounds(self) -> None:
+        base = self._base_term_cfg
+        self.inner.inner.term_cfg = replace(
+            base,
+            x_min=base.x_min * self.showcase_bound_scale,
+            x_max=base.x_max * self.showcase_bound_scale,
+            y_min=base.y_min * self.showcase_bound_scale,
+            y_max=base.y_max * self.showcase_bound_scale,
+            z_max=base.z_max * self.showcase_z_bound_scale,
+        )
+
+    def _is_continuous_set(self) -> bool:
+        return self.scenario_set in CONTINUOUS_SCENARIO_SETS
 
     def _sample_basic(self) -> str:
         return str(self.np_random.choice(BASIC_SCENARIOS))
@@ -427,7 +456,15 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             term = self.inner.inner.term_cfg
             x_margin = min(evader.x - term.x_min, term.x_max - evader.x)
             y_margin = min(evader.y - term.y_min, term.y_max - evader.y)
-            if x_margin <= y_margin:
+            if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and x_margin <= y_margin:
+                outward = 1.0 if evader.x >= 0.0 else -1.0
+                lateral = 1.0 if evader.y <= 0.0 else -1.0
+                offset = (outward * 2.0, lateral * 9.0, 0.0)
+            elif self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO:
+                outward = 1.0 if evader.y >= 0.0 else -1.0
+                lateral = 1.0 if evader.x <= 0.0 else -1.0
+                offset = (lateral * 9.0, outward * 2.0, 0.0)
+            elif x_margin <= y_margin:
                 outward = 1.0 if evader.x >= 0.0 else -1.0
                 lateral = 1.0 if evader.y <= 0.0 else -1.0
                 offset = (outward * 4.0, lateral * 7.0, 0.0)
@@ -446,8 +483,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             pitch=evader.pitch,
         )
 
-    def _reset_continuous_pursuit(self) -> tuple[np.ndarray, dict[str, Any]]:
-        self.current_scenario_name = CONTINUOUS_PURSUIT_SCENARIO
+    def _reset_continuous(self, scenario_name: str) -> tuple[np.ndarray, dict[str, Any]]:
+        self.current_scenario_name = scenario_name
         self.continuous_lowlevel_steps = 0
         self.continuous_recent_distances = []
         self.continuous_recent_closing_speeds = []
@@ -459,13 +496,19 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
-        obs = self._set_inner_state(CONTINUOUS_START_STATE, "rear_close_threat")
+        if scenario_name == CONTINUOUS_SHOWCASE_SCENARIO:
+            self._use_showcase_bounds()
+            start_state = SHOWCASE_START_STATE
+        else:
+            self._use_base_bounds()
+            start_state = CONTINUOUS_START_STATE
+        obs = self._set_inner_state(start_state, "rear_close_threat")
         obs_dict = self.inner.inner._observation(closing_speed=0.0)
         regime, regime_info = self._continuous_regime_from_state(obs_dict, 0.0)
         self.continuous_regimes_seen.add(regime)
         return obs, {
-            "scenario_name": CONTINUOUS_PURSUIT_SCENARIO,
-            "scenario_set": "continuous_pursuit",
+            "scenario_name": scenario_name,
+            "scenario_set": scenario_name,
             **regime_info,
             "continuous_lowlevel_steps": 0,
             "regime_coverage_rate": len(self.continuous_regimes_seen) / len(set(self.regime_schedule)),
@@ -584,6 +627,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         return obs, float(reward), terminated, False, info
 
     def _continuous_success(self) -> bool:
+        if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO:
+            return True
         recent_distance, recent_closing = self._continuous_recent_metrics()
         return recent_distance >= 26.0 and recent_closing <= 0.05
 
@@ -643,8 +688,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "selected_option": idx,
             "option_duration_used": duration_used,
             "switch_count": self.switch_count,
-            "scenario_name": CONTINUOUS_PURSUIT_SCENARIO,
-            "scenario_set": "continuous_pursuit",
+            "scenario_name": self.current_scenario_name,
+            "scenario_set": self.scenario_set,
             "regime_lowlevel_steps": dict(regime_step_counts),
             "scheduled_regime_lowlevel_steps": dict(scheduled_regime_step_counts),
             "phase_transition": False,
@@ -684,6 +729,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             self.scenario_set = str(options["scenario_set"])
 
         requested_name = str(options["scenario_name"]) if options and "scenario_name" in options else None
+        if self.scenario_set != CONTINUOUS_SHOWCASE_SCENARIO:
+            self._use_base_bounds()
         if self.scenario_set == "basic":
             base = requested_name or self._sample_basic()
             obs, info = self.inner.reset(seed=seed, options={"scenario": base})
@@ -700,8 +747,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             comp = requested_name or str(self.np_random.choice(list(COMPOSITE_SCENARIOS.keys())))
             self.current_scenario_name = comp
             return self._reset_composite_state(comp), {"scenario_name": comp, "scenario_set": "composite"}
-        if self.scenario_set == "continuous_pursuit":
-            return self._reset_continuous_pursuit()
+        if self._is_continuous_set():
+            return self._reset_continuous(self.scenario_set)
 
         seq = requested_name or str(self.np_random.choice(list(SEQUENTIAL_SCENARIOS.keys())))
         self.current_scenario_name = seq
@@ -711,7 +758,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
 
     def step(self, action: int):
         idx = int(np.clip(action, 0, 3))
-        if self.scenario_set == "continuous_pursuit":
+        if self._is_continuous_set():
             return self._step_continuous_pursuit(idx)
         total_reward = 0.0
         duration_used = 0

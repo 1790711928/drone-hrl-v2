@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from src.training.highlevel_env import HighLevelOptionEnv
+from src.training.highlevel_env import CONTINUOUS_SHOWCASE_SCENARIO, HighLevelOptionEnv
 
 
 class ZeroModel:
@@ -61,6 +61,7 @@ def print_row(row: dict[str, float | str | int | bool]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect regime geometry in the continuous_pursuit benchmark")
+    parser.add_argument("--scenario-set", choices=["continuous_pursuit", "continuous_showcase"], default="continuous_pursuit")
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
@@ -71,12 +72,16 @@ def main() -> None:
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--print-every", type=int, default=10)
+    parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
+    parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
+    if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
+        args.episode_lowlevel_steps = 500
 
     env = HighLevelOptionEnv(
         low_models=[ZeroModel(), ZeroModel(), ZeroModel(), ZeroModel()],
         option_duration=args.option_duration,
-        scenario_set="continuous_pursuit",
+        scenario_set=args.scenario_set,
         episode_lowlevel_steps=args.episode_lowlevel_steps,
         regime_duration=args.regime_duration,
         regime_schedule=args.regime_schedule,
@@ -84,15 +89,17 @@ def main() -> None:
         boundary_priority_enter=args.boundary_priority_enter,
         boundary_priority_exit=args.boundary_priority_exit,
         pursuer_speed_ratio=args.pursuer_speed_ratio,
+        showcase_bound_scale=args.showcase_bound_scale,
+        showcase_z_bound_scale=args.showcase_z_bound_scale,
     )
 
-    print("=== continuous_pursuit regime geometry ===")
+    print(f"=== {args.scenario_set} regime geometry ===")
     print(
         f"episodes={args.episodes}, episode_lowlevel_steps={args.episode_lowlevel_steps}, "
         f"regime_duration={args.regime_duration}, schedule={args.regime_schedule}"
     )
     for episode in range(args.episodes):
-        _, info = env.reset(options={"scenario_set": "continuous_pursuit"})
+        _, info = env.reset(options={"scenario_set": args.scenario_set})
         print(f"\nEpisode {episode + 1}")
         initial_row = observation_row(env, info)
         last_marker = (str(initial_row["regime_name"]), bool(initial_row["boundary_priority_active"]))

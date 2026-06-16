@@ -5,7 +5,7 @@ import random
 from collections import Counter
 from pathlib import Path
 
-from src.training.highlevel_env import HighLevelOptionEnv
+from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, HighLevelOptionEnv
 
 
 def heuristic_option(
@@ -83,7 +83,7 @@ def main() -> None:
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase"], default="composite")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
@@ -99,10 +99,14 @@ def main() -> None:
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
     parser.add_argument("--boundary-priority-enter", type=float, default=0.24)
     parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
+    parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
+    parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
+    if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
+        args.episode_lowlevel_steps = 500
 
-    if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set != "continuous_pursuit":
-        parser.error(f"--mode {args.mode} requires --scenario-set continuous_pursuit")
+    if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
+        parser.error(f"--mode {args.mode} requires --scenario-set continuous_pursuit or continuous_showcase")
 
     from stable_baselines3 import PPO, SAC
 
@@ -133,6 +137,8 @@ def main() -> None:
         min_regime_hold_steps=args.min_regime_hold_steps,
         boundary_priority_enter=args.boundary_priority_enter,
         boundary_priority_exit=args.boundary_priority_exit,
+        showcase_bound_scale=args.showcase_bound_scale,
+        showcase_z_bound_scale=args.showcase_z_bound_scale,
     )
 
     high_model = None
@@ -221,7 +227,7 @@ def main() -> None:
 
             obs, reward, terminated, truncated, info = env.step(action)
             regime_name = str(info.get("regime_name", "none"))
-            if args.scenario_set == "continuous_pursuit":
+            if args.scenario_set in CONTINUOUS_SCENARIO_SETS:
                 regime_steps = dict(info.get("regime_lowlevel_steps", {regime_name: 1}))
                 for regime, step_count in regime_steps.items():
                     regime_key = str(regime)
@@ -302,7 +308,7 @@ def main() -> None:
     print(f"avg_switch_count={total_switch / n:.3f}")
     print(f"timeout_rate={timeout / n:.3f}")
     print(f"option_usage_rate={usage_rate}")
-    if args.scenario_set == "continuous_pursuit":
+    if args.scenario_set in CONTINUOUS_SCENARIO_SETS:
         usage_by_regime = {}
         for regime, counts in regime_option_usage.items():
             total = max(sum(counts), 1)

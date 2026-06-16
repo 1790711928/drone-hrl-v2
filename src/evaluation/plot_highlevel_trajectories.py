@@ -376,6 +376,8 @@ def main() -> None:
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
+    parser.add_argument("--boundary-priority-enter", type=float, default=0.28)
+    parser.add_argument("--boundary-priority-exit", type=float, default=0.36)
     args = parser.parse_args()
 
     if args.episodes <= 0:
@@ -416,6 +418,8 @@ def main() -> None:
         pursuer_speed_ratio=args.pursuer_speed_ratio,
         regime_schedule=args.regime_schedule,
         min_regime_hold_steps=args.min_regime_hold_steps,
+        boundary_priority_enter=args.boundary_priority_enter,
+        boundary_priority_exit=args.boundary_priority_exit,
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()

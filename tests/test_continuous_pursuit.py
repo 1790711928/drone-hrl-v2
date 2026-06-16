@@ -18,7 +18,8 @@ def test_continuous_pursuit_progresses_without_phase_completion():
     )
     obs, info = env.reset(options={"scenario_set": "continuous_pursuit"})
     assert info["scenario_set"] == "continuous_pursuit"
-    assert info["regime_name"] == "rear"
+    assert info["regime_name"] in {"rear", "boundary"}
+    assert "boundary_priority_active" in info
 
     obs, reward, terminated, truncated, info = env.step(2)
     assert obs.shape == env.observation_space.shape

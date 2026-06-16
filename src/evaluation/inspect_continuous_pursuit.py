@@ -35,6 +35,7 @@ def observation_row(env: HighLevelOptionEnv, info: dict[str, Any]) -> dict[str, 
         "lowlevel_step": int(info.get("continuous_lowlevel_steps", env.continuous_lowlevel_steps)),
         "boundary_priority_active": bool(info.get("boundary_priority_active", False)),
         "state_driven_regime_active": bool(info.get("state_driven_regime_active", False)),
+        "selected_option": str(info.get("selected_option", "none")),
         "score_boundary": float(scores.get("boundary", 0.0)),
         "score_rear": float(scores.get("rear", 0.0)),
         "score_flank": float(scores.get("flank", 0.0)),
@@ -47,7 +48,7 @@ def observation_row(env: HighLevelOptionEnv, info: dict[str, Any]) -> dict[str, 
 
 def print_row(row: dict[str, float | str | int | bool]) -> None:
     print(
-        "step={lowlevel_step:>4} scheduled={scheduled_regime:<8} actual={regime_name:<8} "
+        "step={lowlevel_step:>4} scheduled={scheduled_regime:<8} actual={regime_name:<8} option={selected_option} "
         "boundary_priority={boundary_priority_active} state_driven={state_driven_regime_active} "
         "scores[b={score_boundary:.2f},r={score_rear:.2f},f={score_flank:.2f},v={score_vertical:.2f}] "
         "tf={threat_forward:+.3f} tr={threat_right:+.3f} tu={threat_up:+.3f} "
@@ -63,8 +64,11 @@ def main() -> None:
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
+    parser.add_argument("--boundary-priority-enter", type=float, default=0.28)
+    parser.add_argument("--boundary-priority-exit", type=float, default=0.36)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--option-duration", type=int, default=8)
+    parser.add_argument("--print-every", type=int, default=10)
     args = parser.parse_args()
 
     env = HighLevelOptionEnv(
@@ -75,6 +79,8 @@ def main() -> None:
         regime_duration=args.regime_duration,
         regime_schedule=args.regime_schedule,
         min_regime_hold_steps=args.min_regime_hold_steps,
+        boundary_priority_enter=args.boundary_priority_enter,
+        boundary_priority_exit=args.boundary_priority_exit,
         pursuer_speed_ratio=args.pursuer_speed_ratio,
     )
 
@@ -88,15 +94,19 @@ def main() -> None:
         print(f"\nEpisode {episode + 1}")
         initial_row = observation_row(env, info)
         last_marker = (str(initial_row["regime_name"]), bool(initial_row["boundary_priority_active"]))
+        last_print_step = int(initial_row["lowlevel_step"])
         print_row(initial_row)
         done = False
         while not done:
             _, _, terminated, truncated, info = env.step(0)
             row = observation_row(env, info)
             marker = (str(row["regime_name"]), bool(row["boundary_priority_active"]))
-            if marker != last_marker:
+            step = int(row["lowlevel_step"])
+            should_print_interval = args.print_every > 0 and step - last_print_step >= args.print_every
+            if marker != last_marker or should_print_interval:
                 print_row(row)
                 last_marker = marker
+                last_print_step = step
             done = bool(terminated or truncated)
         print(
             "outcome={outcome}, lowlevel_steps={continuous_lowlevel_steps}, "

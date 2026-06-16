@@ -282,8 +282,10 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 ```powershell
 python -m src.evaluation.inspect_continuous_pursuit --episodes 1 --episode-lowlevel-steps 120
 python -m src.evaluation.eval_highlevel_selector --mode fixed --fixed-policy 2 --episodes 2 --scenario-set continuous_pursuit --episode-lowlevel-steps 120
+python -m src.evaluation.eval_highlevel_selector --mode continuous_heuristic --episodes 20 --scenario-set continuous_pursuit --episode-lowlevel-steps 300
+python -m src.evaluation.eval_highlevel_selector --mode regime_oracle --episodes 20 --scenario-set continuous_pursuit --episode-lowlevel-steps 300
 python -m src.evaluation.eval_highlevel_selector --mode highlevel --episodes 2 --scenario-set continuous_pursuit --high-model outputs/checkpoints/ppo_highlevel_switch.zip --episode-lowlevel-steps 120
-# 可用 --min-regime-hold-steps / --regime-schedule / --pursuer-speed-ratio 调整连续追逃诊断强度；默认 pursuer-speed-ratio=1.20。
+# 可用 --min-regime-hold-steps / --boundary-priority-enter / --boundary-priority-exit / --regime-schedule / --pursuer-speed-ratio 调整连续追逃诊断强度；默认 pursuer-speed-ratio=1.20。
 ```
 
 在训练高层 PPO 前，建议优先运行 one-shot phase × option 区分度诊断：

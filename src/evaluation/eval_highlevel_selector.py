@@ -56,10 +56,30 @@ def heuristic_option(
     return int(candidate)
 
 
+
+
+def continuous_diagnostic_option(info: dict, mode: str) -> int:
+    regime = str(info.get("regime_name", "rear"))
+    min_margin = float(info.get("min_boundary_margin", 1.0))
+    boundary_enter = float(info.get("boundary_priority_enter", 0.28))
+    boundary_active = bool(info.get("boundary_priority_active", False))
+    if mode == "regime_oracle":
+        return {"rear": 0, "flank": 1, "boundary": 2, "vertical": 3}.get(regime, 2)
+    if min_margin <= boundary_enter or boundary_active or regime == "boundary":
+        return 2
+    if regime == "flank":
+        return 1
+    if regime == "vertical":
+        return 3
+    if regime == "rear":
+        return 0
+    return 2
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate fixed/random/heuristic/high-level selector on scenario sets")
     parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "highlevel"], default="fixed")
+    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "highlevel", "continuous_heuristic", "regime_oracle"], default="fixed")
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
@@ -77,6 +97,8 @@ def main() -> None:
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
+    parser.add_argument("--boundary-priority-enter", type=float, default=0.28)
+    parser.add_argument("--boundary-priority-exit", type=float, default=0.36)
     args = parser.parse_args()
 
     from stable_baselines3 import PPO, SAC
@@ -106,6 +128,8 @@ def main() -> None:
         pursuer_speed_ratio=args.pursuer_speed_ratio,
         regime_schedule=args.regime_schedule,
         min_regime_hold_steps=args.min_regime_hold_steps,
+        boundary_priority_enter=args.boundary_priority_enter,
+        boundary_priority_exit=args.boundary_priority_exit,
     )
 
     high_model = None
@@ -173,6 +197,10 @@ def main() -> None:
                     vertical_threshold=args.vertical_threshold,
                     rear_distance_threshold=args.rear_distance_threshold,
                 )
+            elif args.mode in {"continuous_heuristic", "regime_oracle"}:
+                if args.scenario_set != "continuous_pursuit":
+                    raise ValueError(f"--mode {args.mode} requires --scenario-set continuous_pursuit")
+                action = continuous_diagnostic_option(info, args.mode)
             else:
                 assert high_model is not None
                 action, _ = high_model.predict(obs, deterministic=True)
@@ -300,6 +328,11 @@ def main() -> None:
     print(f"avg_completed_phases={completed_phases_total / n:.3f}")
     print(f"phase_success_by_phase_type={phase_success_by_type}")
     print(f"phase_failure_by_phase_type={phase_failure_by_type}")
+    if args.mode in {"continuous_heuristic", "regime_oracle"}:
+        if succ / n > max(oob / n, cap / n):
+            print("controllability_note=diagnostic selector is outperforming failure modes; continuous fine-tune is plausible.")
+        else:
+            print("controllability_note=diagnostic selector still fails often; continue calibrating continuous_pursuit before PPO fine-tune.")
 
 
 if __name__ == "__main__":

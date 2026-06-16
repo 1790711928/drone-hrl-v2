@@ -134,5 +134,5 @@ def test_continuous_rollout_records_regime_switches():
     )
     assert result.scenario == "continuous_pursuit"
     assert result.lowlevel_steps > 0
-    assert result.regime_starts[0][1] == "rear"
+    assert result.regime_starts[0][1] in {"rear", "boundary"}
     assert len(result.evader_points) >= result.lowlevel_steps + 1

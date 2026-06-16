@@ -192,6 +192,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         pursuer_speed_ratio: float = 1.20,
         regime_schedule: str | tuple[str, ...] = DEFAULT_REGIME_SCHEDULE,
         min_regime_hold_steps: int = 20,
+        boundary_priority_enter: float = 0.28,
+        boundary_priority_exit: float = 0.36,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -203,6 +205,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.regime_duration = regime_duration
         self.continuous_pursuer_speed_ratio = pursuer_speed_ratio
         self.min_regime_hold_steps = min_regime_hold_steps
+        self.boundary_priority_enter = boundary_priority_enter
+        self.boundary_priority_exit = boundary_priority_exit
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -235,6 +239,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_last_regime_switch_step = 0
         self.continuous_regime_switch_count = 0
         self.continuous_boundary_priority_steps = 0
+        self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info: dict[str, Any] = {}
 
@@ -368,7 +373,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         scheduled = self._continuous_scheduled_regime()
         scores = self._continuous_threat_scores(obs, closing_speed)
         min_margin = float(obs["min_boundary_margin"])
-        boundary_priority = min_margin < 0.24 or scores["boundary"] >= 1.0
+        if self.continuous_boundary_priority_active:
+            boundary_priority = min_margin < self.boundary_priority_exit
+        else:
+            boundary_priority = min_margin <= self.boundary_priority_enter or scores["boundary"] >= 1.0
+        self.continuous_boundary_priority_active = bool(boundary_priority)
         best_regime = max(scores, key=scores.get)
         best_score = scores[best_regime]
         state_driven_active = boundary_priority or best_score >= 0.55
@@ -396,6 +405,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "threat_scores": scores,
             "state_driven_regime_active": bool(state_driven_active),
             "boundary_priority_active": bool(boundary_priority),
+            "boundary_priority_enter": self.boundary_priority_enter,
+            "boundary_priority_exit": self.boundary_priority_exit,
             "min_boundary_margin": min_margin,
             "distance": float(obs["distance"]),
             "closing_speed": float(closing_speed),
@@ -438,6 +449,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_last_regime_switch_step = 0
         self.continuous_regime_switch_count = 0
         self.continuous_boundary_priority_steps = 0
+        self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
         obs = self._set_inner_state(CONTINUOUS_START_STATE, "rear_close_threat")
@@ -657,6 +669,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_last_regime_switch_step = 0
         self.continuous_regime_switch_count = 0
         self.continuous_boundary_priority_steps = 0
+        self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
 

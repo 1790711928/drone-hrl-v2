@@ -6,6 +6,10 @@ from src.evaluation.plot_highlevel_trajectories import (
     compressed_option_sequence,
     phase_reset_jumps,
     rollout_episode,
+    auto_plot_bounds,
+    boundary_priority_starts,
+    sample_points,
+    save_plot,
     select_episodes_for_plot,
     trajectory_segments,
 )
@@ -77,6 +81,21 @@ def test_trajectory_segments_break_at_phase_starts():
     assert phase_reset_jumps(segments) == [(2, 3)]
 
 
+def test_plot_sampling_and_boundary_priority_starts():
+    points = [(float(i), 0.0, 0.0) for i in range(11)]
+    assert sample_points(points, 5) == [points[0], points[5], points[10]]
+    assert boundary_priority_starts([3, 4, 5, 10, 11]) == [3, 10]
+
+
+def test_auto_plot_bounds_focuses_on_trajectory_extent():
+    bounds = auto_plot_bounds([(0.0, 0.0, 0.0), (10.0, 1.0, 2.0)], [(2.0, 8.0, 1.0)])
+    x_min, x_max, y_min, y_max, z_min, z_max = bounds
+    assert x_min < 0.0 < x_max
+    assert y_min < 0.0 < y_max
+    assert z_min < 0.0 < z_max
+    assert (x_max - x_min) == (y_max - y_min)
+
+
 def test_selection_can_deduplicate_by_scenario_and_option_sequence():
     candidates = [
         episode(scenario="a", episode_id=1),
@@ -136,3 +155,34 @@ def test_continuous_rollout_records_regime_switches():
     assert result.lowlevel_steps > 0
     assert result.regime_starts[0][1] in {"rear", "boundary"}
     assert len(result.evader_points) >= result.lowlevel_steps + 1
+
+
+def test_save_plot_supports_topdown_without_dense_text(tmp_path):
+    ep = EpisodePlotData(
+        scenario="continuous_showcase",
+        mode="regime_oracle",
+        episode_id=12,
+        outcome="escaped",
+        success=True,
+        switch_count=2,
+        option_sequence=[0, 2, 1],
+        completed_phases=0,
+        evader_points=[(0.0, 0.0, 10.0), (1.0, 1.0, 10.2), (2.0, 1.5, 10.4)],
+        pursuer_points=[(-1.0, -1.0, 9.5), (0.0, 0.5, 9.7), (1.0, 1.0, 9.9)],
+        option_switches=[(0, "pi1"), (1, "pi3"), (2, "pi2")],
+        phase_starts=[(0, "start")],
+        regime_starts=[(0, "rear"), (2, "flank")],
+        boundary_priority_points=[1, 2],
+        lowlevel_steps=3,
+    )
+    output = save_plot(
+        ep,
+        tmp_path,
+        (-10, 10, -10, 10, 0, 20),
+        plot_sample_rate=2,
+        max_annotations=0,
+        no_text_annotations=True,
+        view="topdown",
+    )
+    assert output.exists()
+    assert output.name.endswith("_topdown.png")

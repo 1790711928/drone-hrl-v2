@@ -57,6 +57,55 @@ def phase_reset_jumps(segments: list[tuple[int, int, str]]) -> list[tuple[int, i
     return [(segments[index][1], segments[index + 1][0]) for index in range(len(segments) - 1)]
 
 
+def sample_points(points: list[tuple[float, float, float]], sample_rate: int) -> list[tuple[float, float, float]]:
+    if sample_rate <= 1 or len(points) <= 2:
+        return points
+    sampled = points[::sample_rate]
+    if sampled[-1] != points[-1]:
+        sampled.append(points[-1])
+    return sampled
+
+
+def boundary_priority_starts(points: list[int]) -> list[int]:
+    starts: list[int] = []
+    previous: int | None = None
+    for index in sorted(set(points)):
+        if previous is None or index > previous + 1:
+            starts.append(index)
+        previous = index
+    return starts
+
+
+def auto_plot_bounds(
+    evader_points: list[tuple[float, float, float]],
+    pursuer_points: list[tuple[float, float, float]],
+    padding_ratio: float = 0.10,
+) -> tuple[float, float, float, float, float, float]:
+    points = evader_points + pursuer_points
+    xs, ys, zs = zip(*points)
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+    z_min, z_max = min(zs), max(zs)
+    x_span = max(x_max - x_min, 1.0)
+    y_span = max(y_max - y_min, 1.0)
+    z_span = max(z_max - z_min, 1.0)
+    xy_span = max(x_span, y_span)
+    x_center = 0.5 * (x_min + x_max)
+    y_center = 0.5 * (y_min + y_max)
+    z_center = 0.5 * (z_min + z_max)
+    x_half = 0.5 * xy_span * (1.0 + padding_ratio)
+    y_half = 0.5 * xy_span * (1.0 + padding_ratio)
+    z_half = 0.5 * z_span * (1.0 + padding_ratio)
+    return (
+        x_center - x_half,
+        x_center + x_half,
+        y_center - y_half,
+        y_center + y_half,
+        z_center - z_half,
+        z_center + z_half,
+    )
+
+
 @dataclass
 class TrajectoryRecorder:
     env: HighLevelOptionEnv
@@ -277,12 +326,43 @@ def select_episodes_for_plot(
             break
     return selected
 
-def _plot_segment(ax, points: list[tuple[float, float, float]], *, color: str, linestyle: str, linewidth: float, label: str | None) -> None:
+def _plot_segment(
+    ax,
+    points: list[tuple[float, float, float]],
+    *,
+    color: str,
+    linestyle: str,
+    linewidth: float,
+    label: str | None,
+    alpha: float = 1.0,
+    view: str = "3d",
+) -> None:
     if len(points) == 1:
-        ax.scatter(*points[0], color=color, marker=".", s=25, label=label)
+        if view == "topdown":
+            ax.scatter(points[0][0], points[0][1], color=color, marker=".", s=25, label=label, alpha=alpha)
+        else:
+            ax.scatter(*points[0], color=color, marker=".", s=25, label=label, alpha=alpha)
         return
-    coords = list(zip(*points))
-    ax.plot(*coords, color=color, linestyle=linestyle, linewidth=linewidth, label=label)
+    if view == "topdown":
+        xs, ys, _ = zip(*points)
+        ax.plot(xs, ys, color=color, linestyle=linestyle, linewidth=linewidth, label=label, alpha=alpha)
+    else:
+        coords = list(zip(*points))
+        ax.plot(*coords, color=color, linestyle=linestyle, linewidth=linewidth, label=label, alpha=alpha)
+
+
+def _scatter_point(ax, point: tuple[float, float, float], *, view: str, **kwargs) -> None:
+    if view == "topdown":
+        ax.scatter(point[0], point[1], **kwargs)
+    else:
+        ax.scatter(*point, **kwargs)
+
+
+def _annotate_point(ax, point: tuple[float, float, float], text: str, *, view: str, **kwargs) -> None:
+    if view == "topdown":
+        ax.text(point[0], point[1], text, **kwargs)
+    else:
+        ax.text(*point, text, **kwargs)
 
 
 def save_plot(
@@ -293,11 +373,15 @@ def save_plot(
     break_at_phase_transition: bool = True,
     show_phase_reset_jump: bool = False,
     showcase_mode: str = "phase_based",
+    plot_sample_rate: int = 5,
+    max_annotations: int = 8,
+    no_text_annotations: bool = False,
+    view: str = "3d",
 ) -> Path:
     import matplotlib.pyplot as plt
 
     fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection="3d")
+    ax = fig.add_subplot(111, projection=None if view == "topdown" else "3d")
     is_continuous = episode.scenario in CONTINUOUS_SCENARIO_SETS
     segments = (
         trajectory_segments(episode.phase_starts, len(episode.evader_points))
@@ -306,9 +390,26 @@ def save_plot(
     )
     for segment_index, (start, end, _) in enumerate(segments):
         evader_segment = episode.evader_points[start : end + 1]
-        pursuer_segment = episode.pursuer_points[start : end + 1]
-        _plot_segment(ax, evader_segment, color="tab:blue", linestyle="-", linewidth=2.0, label="evader" if segment_index == 0 else None)
-        _plot_segment(ax, pursuer_segment, color="tab:red", linestyle="--", linewidth=1.6, label="pursuer" if segment_index == 0 else None)
+        pursuer_segment = sample_points(episode.pursuer_points[start : end + 1], plot_sample_rate)
+        _plot_segment(
+            ax,
+            evader_segment,
+            color="tab:blue",
+            linestyle="-",
+            linewidth=2.6,
+            label="evader" if segment_index == 0 else None,
+            view=view,
+        )
+        _plot_segment(
+            ax,
+            pursuer_segment,
+            color="tab:red",
+            linestyle="--",
+            linewidth=1.4,
+            label=f"pursuer (sample/{max(plot_sample_rate, 1)})" if segment_index == 0 else None,
+            alpha=0.45,
+            view=view,
+        )
 
     if break_at_phase_transition and show_phase_reset_jump and not is_continuous:
         for jump_index, (end_index, start_index) in enumerate(phase_reset_jumps(segments)):
@@ -321,49 +422,79 @@ def save_plot(
                 linestyle=":",
                 linewidth=1.0,
                 label="phase reset jump (not physical)" if jump_index == 0 else None,
+                view=view,
             )
-            _plot_segment(ax, pursuer_jump, color="gray", linestyle=":", linewidth=1.0, label=None)
+            _plot_segment(ax, pursuer_jump, color="gray", linestyle=":", linewidth=1.0, label=None, view=view)
 
-    ax.scatter(*episode.evader_points[0], color="green", marker="o", s=65, label="evader start")
-    ax.scatter(*episode.evader_points[-1], color="black", marker="X", s=70, label="evader end")
+    _scatter_point(ax, episode.evader_points[0], view=view, color="green", marker="o", s=75, label="evader start", zorder=5)
+    _scatter_point(ax, episode.evader_points[-1], view=view, color="black", marker="X", s=85, label="evader end", zorder=5)
 
-    for marker_index, phase_name in episode.phase_starts:
+    annotation_count = 0
+    option_styles = {
+        "pi1": ("tab:orange", "o"),
+        "pi2": ("tab:purple", "s"),
+        "pi3": ("tab:brown", "^"),
+        "pi4": ("tab:pink", "v"),
+    }
+
+    for marker_index, phase_name in ([] if is_continuous else episode.phase_starts):
         x, y, z = episode.evader_points[marker_index]
-        ax.scatter(x, y, z, color="tab:purple", marker="D", s=45)
-        ax.text(x, y, z, f" phase:{phase_name}", color="tab:purple", fontsize=8)
+        point = (x, y, z)
+        _scatter_point(ax, point, view=view, color="tab:purple", marker="D", s=45, label="phase start" if marker_index == episode.phase_starts[0][0] else None)
+        if not no_text_annotations and annotation_count < max_annotations:
+            _annotate_point(ax, point, f" phase:{phase_name}", view=view, color="tab:purple", fontsize=8)
+            annotation_count += 1
+    seen_option_names: set[str] = set()
     for marker_index, option_name in episode.option_switches:
-        x, y, z = episode.evader_points[marker_index]
-        ax.scatter(x, y, z, color="tab:orange", marker="^", s=45)
-        ax.text(x, y, z, f" {option_name}", color="darkorange", fontsize=8)
-    for marker_index, regime_name in episode.regime_starts:
-        x, y, z = episode.evader_points[marker_index]
-        ax.scatter(x, y, z, color="tab:cyan", marker="s", s=40)
-        ax.text(x, y, z, f" regime:{regime_name}", color="teal", fontsize=8)
-    for marker_index in episode.boundary_priority_points:
-        x, y, z = episode.evader_points[marker_index]
-        ax.scatter(x, y, z, color="crimson", marker="*", s=75)
-        ax.text(x, y, z, " boundary priority", color="crimson", fontsize=8)
+        point = episode.evader_points[marker_index]
+        color, marker = option_styles.get(option_name, ("tab:orange", "o"))
+        label = f"option switch {option_name}" if option_name not in seen_option_names else None
+        seen_option_names.add(option_name)
+        _scatter_point(ax, point, view=view, color=color, marker=marker, s=34, alpha=0.85, label=label, zorder=6)
+    for regime_offset, (marker_index, regime_name) in enumerate(episode.regime_starts):
+        point = episode.evader_points[marker_index]
+        _scatter_point(ax, point, view=view, color="tab:cyan", marker="s", s=38, alpha=0.80, label="regime switch" if regime_offset == 0 else None, zorder=5)
+        if not no_text_annotations and annotation_count < max_annotations:
+            _annotate_point(ax, point, f" {regime_name}", view=view, color="teal", fontsize=8)
+            annotation_count += 1
+    for boundary_offset, marker_index in enumerate(boundary_priority_starts(episode.boundary_priority_points)):
+        point = episode.evader_points[marker_index]
+        _scatter_point(
+            ax,
+            point,
+            view=view,
+            color="darkorange",
+            marker="*",
+            s=80,
+            alpha=0.95,
+            label="boundary priority start" if boundary_offset == 0 else None,
+            zorder=7,
+        )
 
-    x_min, x_max, y_min, y_max, z_min, z_max = bounds
+    x_min, x_max, y_min, y_max, z_min, z_max = auto_plot_bounds(episode.evader_points, episode.pursuer_points)
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
-    ax.set_zlim(z_min, z_max)
+    if view != "topdown":
+        ax.set_zlim(z_min, z_max)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    ax.set_zlabel("z")
+    if view == "topdown":
+        ax.set_aspect("equal", adjustable="box")
+    else:
+        ax.set_zlabel("z")
+    option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
     if is_continuous:
-        title_suffix = f"{episode.scenario} rollout | lowlevel_steps={episode.lowlevel_steps}"
+        first_line = f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | lowlevel_steps={episode.lowlevel_steps}"
     else:
         title_suffix = "phase-based sequential rollout" if showcase_mode == "phase_based" else "continuous showcase requested (not benchmark)"
-    ax.set_title(
-        f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | "
-        f"switch_count={episode.switch_count}\n{title_suffix}"
-    )
+        first_line = f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | {title_suffix}"
+    ax.set_title(f"{first_line}\noption_sequence={option_sequence} | switch_count={episode.switch_count}")
     ax.legend(loc="upper left")
     fig.tight_layout()
 
     plot_dir.mkdir(parents=True, exist_ok=True)
-    output_path = plot_dir / f"highlevel_traj_ep{episode.episode_id:03d}_{episode.scenario}_{episode.mode}_{episode.outcome}.png"
+    view_suffix = "_topdown" if view == "topdown" else ""
+    output_path = plot_dir / f"highlevel_traj_ep{episode.episode_id:03d}_{episode.scenario}_{episode.mode}_{episode.outcome}{view_suffix}.png"
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
     return output_path
@@ -400,6 +531,10 @@ def main() -> None:
     parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
     parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
     parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
+    parser.add_argument("--plot-sample-rate", type=int, default=5)
+    parser.add_argument("--max-annotations", type=int, default=8)
+    parser.add_argument("--no-text-annotations", action="store_true")
+    parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
     args = parser.parse_args()
     if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
@@ -408,6 +543,10 @@ def main() -> None:
         parser.error("--episodes must be positive")
     if args.max_plots <= 0:
         parser.error("--max-plots must be positive")
+    if args.plot_sample_rate <= 0:
+        parser.error("--plot-sample-rate must be positive")
+    if args.max_annotations < 0:
+        parser.error("--max-annotations must be non-negative")
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
     if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
@@ -480,7 +619,7 @@ def main() -> None:
     bounds = (term_cfg.x_min, term_cfg.x_max, term_cfg.y_min, term_cfg.y_max, term_cfg.z_min, term_cfg.z_max)
     for episode in selected:
         print(
-            f"Saved plot: {save_plot(episode, plot_dir, bounds, break_at_phase_transition=args.break_at_phase_transition, show_phase_reset_jump=args.show_phase_reset_jump, showcase_mode=args.showcase_mode)}"
+            f"Saved plot: {save_plot(episode, plot_dir, bounds, break_at_phase_transition=args.break_at_phase_transition, show_phase_reset_jump=args.show_phase_reset_jump, showcase_mode=args.showcase_mode, plot_sample_rate=args.plot_sample_rate, max_annotations=args.max_annotations, no_text_annotations=args.no_text_annotations, view=args.view)}"
         )
 
     plot_dir.mkdir(parents=True, exist_ok=True)

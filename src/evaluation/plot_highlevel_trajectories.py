@@ -376,8 +376,8 @@ def main() -> None:
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
-    parser.add_argument("--boundary-priority-enter", type=float, default=0.28)
-    parser.add_argument("--boundary-priority-exit", type=float, default=0.36)
+    parser.add_argument("--boundary-priority-enter", type=float, default=0.24)
+    parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
     args = parser.parse_args()
 
     if args.episodes <= 0:

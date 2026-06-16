@@ -36,6 +36,7 @@ def observation_row(env: HighLevelOptionEnv, info: dict[str, Any]) -> dict[str, 
         "boundary_priority_active": bool(info.get("boundary_priority_active", False)),
         "state_driven_regime_active": bool(info.get("state_driven_regime_active", False)),
         "selected_option": str(info.get("selected_option", "none")),
+        "outcome": str(info.get("outcome", "running")),
         "score_boundary": float(scores.get("boundary", 0.0)),
         "score_rear": float(scores.get("rear", 0.0)),
         "score_flank": float(scores.get("flank", 0.0)),
@@ -53,7 +54,8 @@ def print_row(row: dict[str, float | str | int | bool]) -> None:
         "scores[b={score_boundary:.2f},r={score_rear:.2f},f={score_flank:.2f},v={score_vertical:.2f}] "
         "tf={threat_forward:+.3f} tr={threat_right:+.3f} tu={threat_up:+.3f} "
         "margin={min_boundary_margin:.3f} dist={distance:.3f} closing={closing_speed:+.3f} "
-        "ex={evader_x_norm:+.3f} ey={evader_y_norm:+.3f} ez={evader_z_norm:+.3f}".format(**row)
+        "ex={evader_x_norm:+.3f} ey={evader_y_norm:+.3f} ez={evader_z_norm:+.3f} "
+        "outcome={outcome}".format(**row)
     )
 
 
@@ -64,8 +66,8 @@ def main() -> None:
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
-    parser.add_argument("--boundary-priority-enter", type=float, default=0.28)
-    parser.add_argument("--boundary-priority-exit", type=float, default=0.36)
+    parser.add_argument("--boundary-priority-enter", type=float, default=0.24)
+    parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--print-every", type=int, default=10)

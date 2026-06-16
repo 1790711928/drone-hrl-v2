@@ -61,7 +61,7 @@ def heuristic_option(
 def continuous_diagnostic_option(info: dict, mode: str) -> int:
     regime = str(info.get("regime_name", "rear"))
     min_margin = float(info.get("min_boundary_margin", 1.0))
-    boundary_enter = float(info.get("boundary_priority_enter", 0.28))
+    boundary_enter = float(info.get("boundary_priority_enter", 0.24))
     boundary_active = bool(info.get("boundary_priority_active", False))
     if mode == "regime_oracle":
         return {"rear": 0, "flank": 1, "boundary": 2, "vertical": 3}.get(regime, 2)
@@ -97,9 +97,12 @@ def main() -> None:
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
     parser.add_argument("--min-regime-hold-steps", type=int, default=20)
-    parser.add_argument("--boundary-priority-enter", type=float, default=0.28)
-    parser.add_argument("--boundary-priority-exit", type=float, default=0.36)
+    parser.add_argument("--boundary-priority-enter", type=float, default=0.24)
+    parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
     args = parser.parse_args()
+
+    if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set != "continuous_pursuit":
+        parser.error(f"--mode {args.mode} requires --scenario-set continuous_pursuit")
 
     from stable_baselines3 import PPO, SAC
 
@@ -198,8 +201,6 @@ def main() -> None:
                     rear_distance_threshold=args.rear_distance_threshold,
                 )
             elif args.mode in {"continuous_heuristic", "regime_oracle"}:
-                if args.scenario_set != "continuous_pursuit":
-                    raise ValueError(f"--mode {args.mode} requires --scenario-set continuous_pursuit")
                 action = continuous_diagnostic_option(info, args.mode)
             else:
                 assert high_model is not None

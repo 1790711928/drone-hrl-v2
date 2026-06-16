@@ -158,8 +158,8 @@ def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState
 CONTINUOUS_PURSUIT_SCENARIO = "continuous_pursuit"
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
 CONTINUOUS_START_STATE = Env3DState(
-    evader=Agent3DState(x=-20.0, y=0.0, z=14.0, speed=10.0, yaw=0.0, pitch=0.02),
-    pursuer=Agent3DState(x=-42.0, y=2.0, z=10.0, speed=11.5, yaw=0.05, pitch=0.04),
+    evader=Agent3DState(x=-5.0, y=0.0, z=14.0, speed=9.5, yaw=0.80, pitch=0.01),
+    pursuer=Agent3DState(x=-18.0, y=-12.5, z=10.5, speed=11.0, yaw=0.80, pitch=0.03),
     step_count=0,
 )
 
@@ -192,8 +192,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         pursuer_speed_ratio: float = 1.20,
         regime_schedule: str | tuple[str, ...] = DEFAULT_REGIME_SCHEDULE,
         min_regime_hold_steps: int = 20,
-        boundary_priority_enter: float = 0.28,
-        boundary_priority_exit: float = 0.36,
+        boundary_priority_enter: float = 0.24,
+        boundary_priority_exit: float = 0.32,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -425,9 +425,16 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             offset = tuple(3.0 * forward[i] + vertical_side * 10.0 * up[i] for i in range(3))
         elif regime == "boundary":
             term = self.inner.inner.term_cfg
-            push_x = 1.0 if evader.x >= 0.0 else -1.0
-            push_y = 1.0 if abs(evader.x) < 0.6 * term.x_max and evader.y >= 0.0 else 0.0
-            offset = (push_x * 10.0, push_y * 6.0, 0.0)
+            x_margin = min(evader.x - term.x_min, term.x_max - evader.x)
+            y_margin = min(evader.y - term.y_min, term.y_max - evader.y)
+            if x_margin <= y_margin:
+                outward = 1.0 if evader.x >= 0.0 else -1.0
+                lateral = 1.0 if evader.y <= 0.0 else -1.0
+                offset = (outward * 4.0, lateral * 7.0, 0.0)
+            else:
+                outward = 1.0 if evader.y >= 0.0 else -1.0
+                lateral = 1.0 if evader.x <= 0.0 else -1.0
+                offset = (lateral * 7.0, outward * 4.0, 0.0)
         else:
             offset = (0.0, 0.0, 0.0)
         return Agent3DState(

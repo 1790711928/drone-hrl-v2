@@ -164,6 +164,7 @@ def main() -> None:
     phase_failure_by_type: dict[str, int] = {}
     regime_option_usage: dict[str, list[int]] = {}
     scheduled_regime_option_usage: dict[str, list[int]] = {}
+    regime_lowlevel_totals: dict[str, int] = {}
     continuous_lowlevel_steps_total = 0.0
     final_distance_total = 0.0
     recent_distance_total = 0.0
@@ -233,6 +234,7 @@ def main() -> None:
                     regime_key = str(regime)
                     regime_option_usage.setdefault(regime_key, [0, 0, 0, 0])
                     regime_option_usage[regime_key][action] += int(step_count)
+                    regime_lowlevel_totals[regime_key] = regime_lowlevel_totals.get(regime_key, 0) + int(step_count)
                 scheduled_steps = dict(info.get("scheduled_regime_lowlevel_steps", {}))
                 for scheduled_regime, step_count in scheduled_steps.items():
                     scheduled_key = str(scheduled_regime)
@@ -319,6 +321,13 @@ def main() -> None:
             total = max(sum(counts), 1)
             usage_by_scheduled_regime[regime] = {f"pi{i+1}": counts[i] / total for i in range(4)}
         print(f"option_usage_by_scheduled_regime={usage_by_scheduled_regime}")
+        total_regime_steps = max(sum(regime_lowlevel_totals.values()), 1)
+        actual_regime_dwell_rate = {
+            regime: count / total_regime_steps for regime, count in sorted(regime_lowlevel_totals.items())
+        }
+        print(f"actual_regime_dwell_rate={actual_regime_dwell_rate}")
+        print(f"unique_options_used={sum(1 for count in option_usage if count > 0)}")
+        print(f"unique_actual_regimes_used={sum(1 for count in regime_lowlevel_totals.values() if count > 0)}")
         print(f"avg_episode_lowlevel_steps={continuous_lowlevel_steps_total / n:.3f}")
         print(f"avg_final_distance={final_distance_total / n:.3f}")
         print(f"avg_recent_distance={recent_distance_total / n:.3f}")

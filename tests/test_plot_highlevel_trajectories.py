@@ -113,6 +113,29 @@ def test_selection_can_deduplicate_by_scenario_and_option_sequence():
     assert [item.episode_id for item in by_sequence] == [1]
 
 
+def test_selection_filters_for_showcase_quality():
+    weak = episode(episode_id=1)
+    weak.switch_count = 1
+    weak.lowlevel_steps = 300
+    weak.option_sequence = [0, 2]
+    strong = episode(episode_id=2)
+    strong.switch_count = 3
+    strong.lowlevel_steps = 320
+    strong.option_sequence = [0, 2, 1]
+    selected = select_episodes_for_plot(
+        [weak, strong],
+        max_plots=2,
+        fixed_policy=2,
+        only_success=False,
+        only_failure=False,
+        min_switch_count=3,
+        min_lowlevel_steps=250,
+        min_unique_options=3,
+    )
+    assert [item.episode_id for item in selected] == [2]
+    assert strong.summary_row()["unique_option_count"] == 3
+
+
 def test_rollout_accepts_specific_scenario_name():
     env = HighLevelOptionEnv([ZeroModel()] * 4, option_duration=1, max_highlevel_steps=1, scenario_set="sequential")
     recorder = TrajectoryRecorder(env)

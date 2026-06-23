@@ -25,7 +25,9 @@ SUMMARY_FIELDS = (
     "outcome",
     "success",
     "switch_count",
+    "unique_option_count",
     "option_sequence",
+    "actual_regime_sequence",
     "completed_phases",
     "lowlevel_steps",
 )
@@ -36,6 +38,14 @@ def compressed_option_sequence(actions: list[int]) -> list[int]:
     for action in actions:
         if not sequence or sequence[-1] != action:
             sequence.append(action)
+    return sequence
+
+
+def compressed_name_sequence(names: list[str]) -> list[str]:
+    sequence: list[str] = []
+    for name in names:
+        if not sequence or sequence[-1] != name:
+            sequence.append(name)
     return sequence
 
 
@@ -198,6 +208,8 @@ class EpisodePlotData:
     lowlevel_steps: int
 
     def summary_row(self) -> dict[str, Any]:
+        option_sequence = "->".join(OPTION_NAMES[index] for index in self.option_sequence)
+        actual_regime_sequence = "->".join(compressed_name_sequence([name for _, name in self.regime_starts]))
         return {
             "scenario": self.scenario,
             "mode": self.mode,
@@ -205,7 +217,9 @@ class EpisodePlotData:
             "outcome": self.outcome,
             "success": self.success,
             "switch_count": self.switch_count,
-            "option_sequence": "->".join(OPTION_NAMES[index] for index in self.option_sequence),
+            "unique_option_count": len(set(self.option_sequence)),
+            "option_sequence": option_sequence,
+            "actual_regime_sequence": actual_regime_sequence,
             "completed_phases": self.completed_phases,
             "lowlevel_steps": self.lowlevel_steps,
         }
@@ -291,11 +305,18 @@ def rollout_episode(
     )
 
 
-def plot_priority(episode: EpisodePlotData, fixed_policy: int) -> tuple[int, int, int]:
+def plot_priority(episode: EpisodePlotData, fixed_policy: int) -> tuple[int, int, int, int, int, int]:
     focus = int(episode.scenario == "sequential_rear_vertical_to_boundary")
     highlevel_success = int(episode.mode == "highlevel" and episode.success)
     fixed_pi3_failure = int(episode.mode == "fixed" and fixed_policy == 2 and not episode.success)
-    return highlevel_success, fixed_pi3_failure, focus
+    return (
+        highlevel_success,
+        fixed_pi3_failure,
+        focus,
+        len(set(episode.option_sequence)),
+        episode.switch_count,
+        episode.lowlevel_steps,
+    )
 
 
 def select_episodes_for_plot(
@@ -305,11 +326,17 @@ def select_episodes_for_plot(
     fixed_policy: int,
     only_success: bool,
     only_failure: bool,
+    min_switch_count: int = 0,
+    min_lowlevel_steps: int = 0,
+    min_unique_options: int = 1,
     one_per_scenario: bool = False,
     one_per_option_sequence: bool = False,
 ) -> list[EpisodePlotData]:
     filtered = [episode for episode in episodes if not only_success or episode.success]
     filtered = [episode for episode in filtered if not only_failure or not episode.success]
+    filtered = [episode for episode in filtered if episode.switch_count >= min_switch_count]
+    filtered = [episode for episode in filtered if episode.lowlevel_steps >= min_lowlevel_steps]
+    filtered = [episode for episode in filtered if len(set(episode.option_sequence)) >= min_unique_options]
     selected: list[EpisodePlotData] = []
     seen_scenarios: set[str] = set()
     seen_sequences: set[tuple[int, ...]] = set()
@@ -535,6 +562,10 @@ def main() -> None:
     parser.add_argument("--max-annotations", type=int, default=8)
     parser.add_argument("--no-text-annotations", action="store_true")
     parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
+    parser.add_argument("--min-switch-count", type=int, default=0)
+    parser.add_argument("--min-lowlevel-steps", type=int, default=0)
+    parser.add_argument("--min-unique-options", type=int, default=1)
+    parser.add_argument("--max-rollout-attempts", type=int, default=0)
     args = parser.parse_args()
     if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
@@ -547,6 +578,8 @@ def main() -> None:
         parser.error("--plot-sample-rate must be positive")
     if args.max_annotations < 0:
         parser.error("--max-annotations must be non-negative")
+    if args.min_switch_count < 0 or args.min_lowlevel_steps < 0 or args.min_unique_options < 1:
+        parser.error("episode filter thresholds must be non-negative and --min-unique-options must be >= 1")
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
     if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
@@ -590,8 +623,11 @@ def main() -> None:
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()
-    episodes = [
-        rollout_episode(
+    max_attempts = args.max_rollout_attempts or max(args.episodes, args.max_plots * 20)
+    episodes: list[EpisodePlotData] = []
+    selected: list[EpisodePlotData] = []
+    for episode_id in range(1, max_attempts + 1):
+        episode = rollout_episode(
             env,
             recorder,
             episode_id=episode_id,
@@ -601,17 +637,33 @@ def main() -> None:
             scenario_set=args.scenario_set,
             scenario_name=args.scenario_name,
         )
-        for episode_id in range(1, args.episodes + 1)
-    ]
-    selected = select_episodes_for_plot(
-        episodes,
-        max_plots=args.max_plots,
-        fixed_policy=args.fixed_policy,
-        only_success=args.only_success,
-        only_failure=args.only_failure,
-        one_per_scenario=args.one_per_scenario,
-        one_per_option_sequence=args.one_per_option_sequence,
-    )
+        episodes.append(episode)
+        selected = select_episodes_for_plot(
+            episodes,
+            max_plots=args.max_plots,
+            fixed_policy=args.fixed_policy,
+            only_success=args.only_success,
+            only_failure=args.only_failure,
+            min_switch_count=args.min_switch_count,
+            min_lowlevel_steps=args.min_lowlevel_steps,
+            min_unique_options=args.min_unique_options,
+            one_per_scenario=args.one_per_scenario,
+            one_per_option_sequence=args.one_per_option_sequence,
+        )
+        if len(selected) >= args.max_plots and episode_id >= args.episodes:
+            break
+        if episode_id >= args.episodes and not any(
+            (args.min_switch_count, args.min_lowlevel_steps, args.min_unique_options > 1)
+        ):
+            break
+    if not selected:
+        print(
+            "No episodes matched plot filters: "
+            f"min_switch_count={args.min_switch_count}, "
+            f"min_lowlevel_steps={args.min_lowlevel_steps}, "
+            f"min_unique_options={args.min_unique_options}. "
+            f"Attempts={len(episodes)}."
+        )
 
     output_dir = Path(args.out_dir)
     plot_dir = output_dir / "highlevel_traj_plots"

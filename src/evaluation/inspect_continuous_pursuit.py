@@ -102,6 +102,8 @@ def main() -> None:
         _, info = env.reset(options={"scenario_set": args.scenario_set})
         print(f"\nEpisode {episode + 1}")
         initial_row = observation_row(env, info)
+        regime_counts: dict[str, int] = {str(initial_row["regime_name"]): 1}
+        selected_options: set[str] = set()
         last_marker = (str(initial_row["regime_name"]), bool(initial_row["boundary_priority_active"]))
         last_print_step = int(initial_row["lowlevel_step"])
         print_row(initial_row)
@@ -109,6 +111,9 @@ def main() -> None:
         while not done:
             _, _, terminated, truncated, info = env.step(0)
             row = observation_row(env, info)
+            regime_counts[str(row["regime_name"])] = regime_counts.get(str(row["regime_name"]), 0) + int(info.get("option_duration_used", 1))
+            if str(row["selected_option"]) != "none":
+                selected_options.add(str(row["selected_option"]))
             marker = (str(row["regime_name"]), bool(row["boundary_priority_active"]))
             step = int(row["lowlevel_step"])
             should_print_interval = args.print_every > 0 and step - last_print_step >= args.print_every
@@ -122,6 +127,13 @@ def main() -> None:
             "recent_distance={recent_distance:.3f}, recent_closing_speed={recent_closing_speed:+.3f}, "
             "regime_coverage_rate={regime_coverage_rate:.3f}, boundary_priority_rate={boundary_priority_rate:.3f}, "
             "state_driven_switches={state_driven_regime_switch_count}".format(**info)
+        )
+        total_regime_samples = max(sum(regime_counts.values()), 1)
+        dwell = {regime: count / total_regime_samples for regime, count in sorted(regime_counts.items())}
+        print(
+            f"actual_regime_dwell_rate={dwell}, "
+            f"unique_actual_regimes_used={len(dwell)}, "
+            f"unique_options_used={len(selected_options)}"
         )
 
 

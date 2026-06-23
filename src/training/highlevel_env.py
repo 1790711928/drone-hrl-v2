@@ -377,6 +377,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             boundary_score += 0.55
         elif min_margin >= 0.28:
             boundary_score *= 0.35
+        if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO:
+            if min_margin >= 0.26:
+                boundary_score *= 0.20
+            elif min_margin >= 0.18:
+                boundary_score *= 0.50
 
         rear_pressure = self._clamp01(-float(obs["threat_forward"]))
         closing_term = self._clamp01(max(0.0, closing_speed) / 0.25)
@@ -402,21 +407,36 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         scheduled = self._continuous_scheduled_regime()
         scores = self._continuous_threat_scores(obs, closing_speed)
         min_margin = float(obs["min_boundary_margin"])
-        if self.continuous_boundary_priority_active:
-            boundary_priority = min_margin < self.boundary_priority_exit
+        if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO:
+            boundary_enter = min(self.boundary_priority_enter, 0.18)
+            boundary_exit = max(self.boundary_priority_exit, 0.30)
         else:
-            boundary_priority = min_margin <= self.boundary_priority_enter or scores["boundary"] >= 1.0
+            boundary_enter = self.boundary_priority_enter
+            boundary_exit = self.boundary_priority_exit
+        if self.continuous_boundary_priority_active:
+            boundary_priority = min_margin < boundary_exit
+        else:
+            boundary_priority = min_margin <= boundary_enter or (
+                self.scenario_set != CONTINUOUS_SHOWCASE_SCENARIO and scores["boundary"] >= 1.0
+            )
         self.continuous_boundary_priority_active = bool(boundary_priority)
         best_regime = max(scores, key=scores.get)
         best_score = scores[best_regime]
-        state_driven_active = boundary_priority or best_score >= 0.55
+        score_threshold = 0.72 if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO else 0.55
+        state_driven_active = boundary_priority or best_score >= score_threshold
         candidate = "boundary" if boundary_priority else (best_regime if state_driven_active else scheduled)
+        if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and not boundary_priority:
+            scheduled_score = scores.get(scheduled, 0.0)
+            if scheduled != best_regime and scheduled_score >= best_score - 0.25:
+                candidate = scheduled
+            elif scheduled != self.continuous_active_regime:
+                candidate = scheduled
 
         current = self.continuous_active_regime
         hold_steps = self.continuous_lowlevel_steps - self.continuous_last_regime_switch_step
         if current is not None and candidate != current and not boundary_priority and hold_steps < self.min_regime_hold_steps:
             current_score = scores.get(current, 0.0)
-            if best_score <= current_score + 0.18:
+            if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO or best_score <= current_score + 0.18:
                 candidate = current
 
         if current is None:
@@ -434,8 +454,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "threat_scores": scores,
             "state_driven_regime_active": bool(state_driven_active),
             "boundary_priority_active": bool(boundary_priority),
-            "boundary_priority_enter": self.boundary_priority_enter,
-            "boundary_priority_exit": self.boundary_priority_exit,
+            "boundary_priority_enter": boundary_enter,
+            "boundary_priority_exit": boundary_exit,
             "min_boundary_margin": min_margin,
             "distance": float(obs["distance"]),
             "closing_speed": float(closing_speed),

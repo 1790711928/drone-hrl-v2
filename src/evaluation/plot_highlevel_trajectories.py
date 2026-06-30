@@ -19,6 +19,7 @@ STRATEGY_LABELS = {
     3: "Vertical strategy",
 }
 OPTION_TO_STRATEGY = {name: STRATEGY_LABELS[index] for index, name in enumerate(OPTION_NAMES)}
+SCRIPTED_SHOWCASE_SCRIPT_NAME = "rear60-flank60-vertical60-boundary60-rear80-flank80-vertical100"
 LOW_MODEL_FILENAMES = (
     "sac_low_1_rear_close_threat.zip",
     "sac_low_2_flank_threat.zip",
@@ -35,6 +36,7 @@ SUMMARY_FIELDS = (
     "unique_option_count",
     "option_sequence",
     "actual_regime_sequence",
+    "showcase_script",
     "completed_phases",
     "lowlevel_steps",
 )
@@ -243,6 +245,7 @@ class EpisodePlotData:
             "unique_option_count": len(set(self.option_sequence)),
             "option_sequence": option_sequence,
             "actual_regime_sequence": actual_regime_sequence,
+            "showcase_script": SCRIPTED_SHOWCASE_SCRIPT_NAME if self.scenario == SCRIPTED_SHOWCASE_SCENARIO or self.mode == "scripted_showcase" else "",
             "completed_phases": self.completed_phases,
             "lowlevel_steps": self.lowlevel_steps,
         }
@@ -426,6 +429,7 @@ def save_plot(
     plot_sample_rate: int = 5,
     max_annotations: int = 8,
     no_text_annotations: bool = False,
+    show_callouts: bool = False,
     view: str = "3d",
 ) -> Path:
     import matplotlib.pyplot as plt
@@ -433,6 +437,8 @@ def save_plot(
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection=None if view == "topdown" else "3d")
     is_continuous = episode.scenario in CONTINUOUS_SCENARIO_SETS
+    is_scripted_showcase = episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase"
+    suppress_text_annotations = no_text_annotations or (is_scripted_showcase and not show_callouts)
     segments = (
         trajectory_segments(episode.phase_starts, len(episode.evader_points))
         if break_at_phase_transition and not is_continuous
@@ -491,7 +497,7 @@ def save_plot(
         x, y, z = episode.evader_points[marker_index]
         point = (x, y, z)
         _scatter_point(ax, point, view=view, color="tab:purple", marker="D", s=45, label="phase start" if marker_index == episode.phase_starts[0][0] else None)
-        if not no_text_annotations and annotation_count < max_annotations:
+        if not suppress_text_annotations and annotation_count < max_annotations:
             _annotate_point(ax, point, f" phase:{phase_name}", view=view, color="tab:purple", fontsize=8)
             annotation_count += 1
     seen_option_names: set[str] = set()
@@ -504,10 +510,23 @@ def save_plot(
             label = f"option switch {option_name}" if option_name not in seen_option_names else None
         seen_option_names.add(option_name)
         _scatter_point(ax, point, view=view, color=color, marker=marker, s=34, alpha=0.85, label=label, zorder=6)
+
+    if show_callouts and is_scripted_showcase:
+        for callout_index, (marker_index, option_name) in enumerate(episode.option_switches[: max(0, min(max_annotations, 6))]):
+            point = episode.evader_points[marker_index]
+            color, _ = option_styles.get(option_name, ("tab:orange", "o"))
+            label_text = OPTION_TO_STRATEGY.get(option_name, option_name).replace(" strategy", "")
+            dx = 5.0 + 1.5 * (callout_index % 2)
+            dy = 4.0 * (1 if callout_index % 2 == 0 else -1)
+            dz = 3.0 if view != "topdown" else 0.0
+            label_point = (point[0] + dx, point[1] + dy, point[2] + dz)
+            _plot_segment(ax, [point, label_point], color=color, linestyle=":", linewidth=0.8, label=None, alpha=0.65, view=view)
+            _annotate_point(ax, label_point, label_text, view=view, color=color, fontsize=8)
+
     for regime_offset, (marker_index, regime_name) in enumerate(episode.regime_starts):
         point = episode.evader_points[marker_index]
         _scatter_point(ax, point, view=view, color="tab:cyan", marker="s", s=38, alpha=0.80, label="regime switch" if regime_offset == 0 else None, zorder=5)
-        if not no_text_annotations and annotation_count < max_annotations:
+        if not suppress_text_annotations and annotation_count < max_annotations:
             _annotate_point(ax, point, f" {regime_name}", view=view, color="teal", fontsize=8)
             annotation_count += 1
     for boundary_offset, marker_index in enumerate(boundary_priority_starts(episode.boundary_priority_points)):
@@ -544,12 +563,17 @@ def save_plot(
         option_sequence = "->".join(STRATEGY_LABELS[index] for index in episode.option_sequence)
     else:
         option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
-    if is_continuous:
+    if is_scripted_showcase:
+        first_line = f"Scripted showcase rollout | outcome={episode.outcome} | lowlevel_steps={episode.lowlevel_steps}"
+        second_line = f"switch_count={episode.switch_count} | unique_strategies={len(set(episode.option_sequence))}"
+    elif is_continuous:
         first_line = f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | lowlevel_steps={episode.lowlevel_steps}"
+        second_line = f"option_sequence={option_sequence} | switch_count={episode.switch_count}"
     else:
         title_suffix = "phase-based sequential rollout" if showcase_mode == "phase_based" else "continuous showcase requested (not benchmark)"
         first_line = f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | {title_suffix}"
-    ax.set_title(f"{first_line}\noption_sequence={option_sequence} | switch_count={episode.switch_count}")
+        second_line = f"option_sequence={option_sequence} | switch_count={episode.switch_count}"
+    ax.set_title(f"{first_line}\n{second_line}")
     ax.legend(loc="upper left")
     fig.tight_layout()
 
@@ -595,6 +619,7 @@ def main() -> None:
     parser.add_argument("--plot-sample-rate", type=int, default=5)
     parser.add_argument("--max-annotations", type=int, default=8)
     parser.add_argument("--no-text-annotations", action="store_true")
+    parser.add_argument("--show-callouts", action="store_true")
     parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
     parser.add_argument("--min-switch-count", type=int, default=0)
     parser.add_argument("--min-lowlevel-steps", type=int, default=0)
@@ -706,8 +731,24 @@ def main() -> None:
     term_cfg = env.inner.inner.term_cfg
     bounds = (term_cfg.x_min, term_cfg.x_max, term_cfg.y_min, term_cfg.y_max, term_cfg.z_min, term_cfg.z_max)
     for episode in selected:
+        saved_path = save_plot(
+            episode,
+            plot_dir,
+            bounds,
+            break_at_phase_transition=args.break_at_phase_transition,
+            show_phase_reset_jump=args.show_phase_reset_jump,
+            showcase_mode=args.showcase_mode,
+            plot_sample_rate=args.plot_sample_rate,
+            max_annotations=args.max_annotations,
+            no_text_annotations=args.no_text_annotations,
+            show_callouts=args.show_callouts,
+            view=args.view,
+        )
+        option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
         print(
-            f"Saved plot: {save_plot(episode, plot_dir, bounds, break_at_phase_transition=args.break_at_phase_transition, show_phase_reset_jump=args.show_phase_reset_jump, showcase_mode=args.showcase_mode, plot_sample_rate=args.plot_sample_rate, max_annotations=args.max_annotations, no_text_annotations=args.no_text_annotations, view=args.view)}"
+            f"Saved plot: {saved_path} | lowlevel_steps={episode.lowlevel_steps} | "
+            f"switch_count={episode.switch_count} | unique_strategies={len(set(episode.option_sequence))} | "
+            f"outcome={episode.outcome} | option_sequence={option_sequence}"
         )
 
     plot_dir.mkdir(parents=True, exist_ok=True)

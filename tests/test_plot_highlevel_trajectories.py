@@ -234,3 +234,28 @@ def test_scripted_showcase_rollout_uses_regime_to_strategy_mapping():
     assert result.lowlevel_steps > 0
     assert len(set(result.option_sequence)) >= 3
     assert result.option_sequence[:3] == [0, 1, 3]
+
+
+def test_scripted_showcase_summary_keeps_sequence_and_save_plot_callouts(tmp_path):
+    ep = EpisodePlotData(
+        scenario="scripted_showcase",
+        mode="scripted_showcase",
+        episode_id=14,
+        outcome="escaped",
+        success=True,
+        switch_count=3,
+        option_sequence=[0, 1, 3, 2],
+        completed_phases=0,
+        evader_points=[(0.0, 0.0, 150.0), (5.0, 5.0, 151.0), (10.0, 6.0, 155.0), (12.0, 10.0, 154.0)],
+        pursuer_points=[(-2.0, -1.0, 149.0), (3.0, 3.0, 150.0), (8.0, 5.0, 153.0), (11.0, 8.0, 153.0)],
+        option_switches=[(0, "pi1"), (1, "pi2"), (2, "pi4"), (3, "pi3")],
+        phase_starts=[(0, "start")],
+        regime_starts=[(0, "rear"), (1, "flank"), (2, "vertical"), (3, "boundary")],
+        boundary_priority_points=[],
+        lowlevel_steps=500,
+    )
+    row = ep.summary_row()
+    assert row["option_sequence"] == "pi1->pi2->pi4->pi3"
+    assert row["showcase_script"]
+    output = save_plot(ep, tmp_path, (-20, 20, -20, 20, 0, 300), show_callouts=True, max_annotations=4)
+    assert output.exists()

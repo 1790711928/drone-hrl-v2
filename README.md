@@ -280,7 +280,7 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 
 `continuous_showcase` 与 `continuous_pursuit` 分离：它使用更大的局部展示边界（默认 x/y 放大 `2.5x`、z 上界放大 `1.5x`）和中心区域起点，目标是生成连续、可读的长时间追逃轨迹，展示 option 组合潜力；它不替代 `sequential` 主实验，也不作为严格 continuous 量化结论。
 
-`scripted_showcase` 只用于论文定性可视化：evader/pursuer 状态保持连续，不做 phase injection、不 teleport、不重置位置；regime 使用固定展示脚本 `rear(0-80) -> flank(80-160) -> vertical(160-240) -> boundary(240-320) -> rear(320-400) -> flank(400-500)`，并用 `rear->pi1`、`flank->pi2`、`vertical->pi4`、`boundary->pi3` 的 scripted selector 生成多策略切换轨迹。它使用更大的局部展示边界（x/y 至少 `4.0x`、z 至少 `2.0x`），仅用于 qualitative visualization，不用于主量化结论。
+`scripted_showcase` 只用于论文定性可视化：evader/pursuer 状态保持连续，不做 phase injection、不 teleport、不重置位置；regime 使用固定展示脚本 `rear(0-60) -> flank(60-120) -> vertical(120-180) -> boundary(180-240) -> rear(240-320) -> flank(320-400) -> vertical(400-500)`，并用 `rear->pi1`、`flank->pi2`、`vertical->pi4`、`boundary->pi3` 的 scripted selector 生成多策略切换轨迹。它使用更大的局部展示边界（x/y/z 统一至少 `6.0x`），仅用于 qualitative visualization，不用于主量化结论。
 
 连续追逃诊断与评估示例：
 ```powershell

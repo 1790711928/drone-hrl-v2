@@ -94,18 +94,18 @@ def test_scripted_showcase_uses_scripted_regime_and_expanded_bounds():
         low_models=[ZeroModel(), ZeroModel(), ZeroModel(), ZeroModel()],
         scenario_set="scripted_showcase",
         option_duration=1,
-        episode_lowlevel_steps=170,
+        episode_lowlevel_steps=250,
     )
     _, info = env.reset(options={"scenario_set": "scripted_showcase"})
     assert info["scenario_set"] == "scripted_showcase"
     assert info["regime_name"] == "rear"
-    assert env.inner.inner.term_cfg.x_max == 200.0
-    assert env.inner.inner.term_cfg.y_max == 200.0
-    assert env.inner.inner.term_cfg.z_max == 100.0
+    assert env.inner.inner.term_cfg.x_max == 300.0
+    assert env.inner.inner.term_cfg.y_max == 300.0
+    assert env.inner.inner.term_cfg.z_max == 300.0
     start_evader = env.inner.inner.state.evader
 
     regimes = []
-    for _ in range(170):
+    for _ in range(250):
         _, _, terminated, truncated, info = env.step({"rear": 0, "flank": 1, "vertical": 3, "boundary": 2}.get(info["regime_name"], 0))
         regimes.append(info["regime_name"])
         if terminated or truncated:
@@ -113,5 +113,5 @@ def test_scripted_showcase_uses_scripted_regime_and_expanded_bounds():
     current_evader = env.inner.inner.state.evader
     jump_from_start = ((current_evader.x - start_evader.x) ** 2 + (current_evader.y - start_evader.y) ** 2 + (current_evader.z - start_evader.z) ** 2) ** 0.5
     assert jump_from_start > 0.0
-    assert {"rear", "flank", "vertical"}.issubset(set(regimes))
+    assert {"rear", "flank", "vertical", "boundary"}.issubset(set(regimes))
     assert info["completed_phases"] == 0

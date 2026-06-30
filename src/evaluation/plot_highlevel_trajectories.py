@@ -123,6 +123,22 @@ def auto_plot_bounds(
     )
 
 
+def equalize_3d_bounds(bounds: tuple[float, float, float, float, float, float]) -> tuple[float, float, float, float, float, float]:
+    x_min, x_max, y_min, y_max, z_min, z_max = bounds
+    x_center = 0.5 * (x_min + x_max)
+    y_center = 0.5 * (y_min + y_max)
+    z_center = 0.5 * (z_min + z_max)
+    half_span = 0.5 * max(x_max - x_min, y_max - y_min, z_max - z_min, 1.0)
+    return (
+        x_center - half_span,
+        x_center + half_span,
+        y_center - half_span,
+        y_center + half_span,
+        z_center - half_span,
+        z_center + half_span,
+    )
+
+
 @dataclass
 class TrajectoryRecorder:
     env: HighLevelOptionEnv
@@ -508,11 +524,16 @@ def save_plot(
             zorder=7,
         )
 
-    x_min, x_max, y_min, y_max, z_min, z_max = auto_plot_bounds(episode.evader_points, episode.pursuer_points)
+    bounds = auto_plot_bounds(episode.evader_points, episode.pursuer_points)
+    if view != "topdown":
+        bounds = equalize_3d_bounds(bounds)
+    x_min, x_max, y_min, y_max, z_min, z_max = bounds
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
     if view != "topdown":
         ax.set_zlim(z_min, z_max)
+        if hasattr(ax, "set_box_aspect"):
+            ax.set_box_aspect((x_max - x_min, y_max - y_min, z_max - z_min))
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     if view == "topdown":

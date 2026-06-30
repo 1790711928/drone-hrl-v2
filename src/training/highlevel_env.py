@@ -161,7 +161,7 @@ SCRIPTED_SHOWCASE_SCENARIO = "scripted_showcase"
 CONTINUOUS_SCENARIO_SETS = {CONTINUOUS_PURSUIT_SCENARIO, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO}
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
 SCRIPTED_SHOWCASE_SCHEDULE = ("rear", "flank", "vertical", "boundary", "rear", "flank")
-SCRIPTED_SHOWCASE_DURATIONS = (80, 80, 80, 80, 80, 100)
+SCRIPTED_SHOWCASE_DURATIONS = (60, 60, 60, 60, 80, 80, 100)
 CONTINUOUS_START_STATE = Env3DState(
     evader=Agent3DState(x=-5.0, y=0.0, z=14.0, speed=9.5, yaw=0.80, pitch=0.01),
     pursuer=Agent3DState(x=-18.0, y=-12.5, z=10.5, speed=11.0, yaw=0.80, pitch=0.03),
@@ -173,8 +173,8 @@ SHOWCASE_START_STATE = Env3DState(
     step_count=0,
 )
 SCRIPTED_SHOWCASE_START_STATE = Env3DState(
-    evader=Agent3DState(x=0.0, y=0.0, z=50.0, speed=9.3, yaw=0.55, pitch=0.0),
-    pursuer=Agent3DState(x=-14.0, y=-8.0, z=46.0, speed=10.8, yaw=0.55, pitch=0.02),
+    evader=Agent3DState(x=0.0, y=0.0, z=150.0, speed=9.3, yaw=0.80, pitch=0.0),
+    pursuer=Agent3DState(x=-14.0, y=-8.0, z=144.0, speed=10.8, yaw=0.80, pitch=0.02),
     step_count=0,
 )
 
@@ -269,8 +269,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
     def _use_showcase_bounds(self) -> None:
         base = self._base_term_cfg
         if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
-            xy_scale = max(self.showcase_bound_scale, 4.0)
-            z_scale = max(self.showcase_z_bound_scale, 2.0)
+            xy_scale = max(self.showcase_bound_scale, 6.0)
+            z_scale = xy_scale
         else:
             xy_scale = self.showcase_bound_scale
             z_scale = self.showcase_z_bound_scale

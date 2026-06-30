@@ -157,8 +157,11 @@ def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState
 
 CONTINUOUS_PURSUIT_SCENARIO = "continuous_pursuit"
 CONTINUOUS_SHOWCASE_SCENARIO = "continuous_showcase"
-CONTINUOUS_SCENARIO_SETS = {CONTINUOUS_PURSUIT_SCENARIO, CONTINUOUS_SHOWCASE_SCENARIO}
+SCRIPTED_SHOWCASE_SCENARIO = "scripted_showcase"
+CONTINUOUS_SCENARIO_SETS = {CONTINUOUS_PURSUIT_SCENARIO, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO}
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
+SCRIPTED_SHOWCASE_SCHEDULE = ("rear", "flank", "vertical", "boundary", "rear", "flank")
+SCRIPTED_SHOWCASE_DURATIONS = (80, 80, 80, 80, 80, 100)
 CONTINUOUS_START_STATE = Env3DState(
     evader=Agent3DState(x=-5.0, y=0.0, z=14.0, speed=9.5, yaw=0.80, pitch=0.01),
     pursuer=Agent3DState(x=-18.0, y=-12.5, z=10.5, speed=11.0, yaw=0.80, pitch=0.03),
@@ -167,6 +170,11 @@ CONTINUOUS_START_STATE = Env3DState(
 SHOWCASE_START_STATE = Env3DState(
     evader=Agent3DState(x=0.0, y=0.0, z=37.0, speed=9.5, yaw=0.55, pitch=0.01),
     pursuer=Agent3DState(x=-16.0, y=-9.0, z=33.0, speed=11.0, yaw=0.55, pitch=0.03),
+    step_count=0,
+)
+SCRIPTED_SHOWCASE_START_STATE = Env3DState(
+    evader=Agent3DState(x=0.0, y=0.0, z=50.0, speed=9.3, yaw=0.55, pitch=0.0),
+    pursuer=Agent3DState(x=-14.0, y=-8.0, z=46.0, speed=10.8, yaw=0.55, pitch=0.02),
     step_count=0,
 )
 
@@ -260,13 +268,19 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
 
     def _use_showcase_bounds(self) -> None:
         base = self._base_term_cfg
+        if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
+            xy_scale = max(self.showcase_bound_scale, 4.0)
+            z_scale = max(self.showcase_z_bound_scale, 2.0)
+        else:
+            xy_scale = self.showcase_bound_scale
+            z_scale = self.showcase_z_bound_scale
         self.inner.inner.term_cfg = replace(
             base,
-            x_min=base.x_min * self.showcase_bound_scale,
-            x_max=base.x_max * self.showcase_bound_scale,
-            y_min=base.y_min * self.showcase_bound_scale,
-            y_max=base.y_max * self.showcase_bound_scale,
-            z_max=base.z_max * self.showcase_z_bound_scale,
+            x_min=base.x_min * xy_scale,
+            x_max=base.x_max * xy_scale,
+            y_min=base.y_min * xy_scale,
+            y_max=base.y_max * xy_scale,
+            z_max=base.z_max * z_scale,
         )
 
     def _is_continuous_set(self) -> bool:
@@ -356,6 +370,14 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         }
 
     def _continuous_scheduled_regime(self) -> str:
+        if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
+            step_in_cycle = self.continuous_lowlevel_steps % sum(SCRIPTED_SHOWCASE_DURATIONS)
+            cursor = 0
+            for regime, duration in zip(SCRIPTED_SHOWCASE_SCHEDULE, SCRIPTED_SHOWCASE_DURATIONS):
+                cursor += duration
+                if step_in_cycle < cursor:
+                    return regime
+            return SCRIPTED_SHOWCASE_SCHEDULE[-1]
         index = self.continuous_lowlevel_steps // max(self.regime_duration, 1)
         return self.regime_schedule[index % len(self.regime_schedule)]
 
@@ -407,6 +429,35 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         scheduled = self._continuous_scheduled_regime()
         scores = self._continuous_threat_scores(obs, closing_speed)
         min_margin = float(obs["min_boundary_margin"])
+        if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
+            boundary_enter = self.boundary_priority_enter
+            boundary_exit = self.boundary_priority_exit
+            boundary_priority = min_margin <= boundary_enter
+            current = self.continuous_active_regime
+            if current is None:
+                self.continuous_active_regime = scheduled
+                self.continuous_last_regime_switch_step = self.continuous_lowlevel_steps
+            elif scheduled != current:
+                self.continuous_active_regime = scheduled
+                self.continuous_last_regime_switch_step = self.continuous_lowlevel_steps
+                self.continuous_regime_switch_count += 1
+            actual = self.continuous_active_regime or scheduled
+            self.continuous_boundary_priority_active = bool(boundary_priority)
+            info = {
+                "scheduled_regime": scheduled,
+                "regime_name": actual,
+                "threat_scores": scores,
+                "state_driven_regime_active": False,
+                "boundary_priority_active": bool(boundary_priority),
+                "boundary_priority_enter": boundary_enter,
+                "boundary_priority_exit": boundary_exit,
+                "min_boundary_margin": min_margin,
+                "distance": float(obs["distance"]),
+                "closing_speed": float(closing_speed),
+                "state_driven_regime_switch_count": self.continuous_regime_switch_count,
+            }
+            self.continuous_last_regime_info = dict(info)
+            return actual, info
         if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO:
             boundary_enter = min(self.boundary_priority_enter, 0.18)
             boundary_exit = max(self.boundary_priority_exit, 0.30)
@@ -466,7 +517,29 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
 
     def _continuous_pursuer_target(self, evader: Agent3DState, regime: str) -> Agent3DState:
         forward, right, up = _body_axes(evader)
-        if regime == "flank":
+        if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
+            script_index = SCRIPTED_SHOWCASE_SCHEDULE.index(regime) if regime in SCRIPTED_SHOWCASE_SCHEDULE else 0
+            if regime == "flank":
+                side = -1.0 if script_index % 2 else 1.0
+                offset = tuple(10.0 * forward[i] + side * 12.0 * right[i] for i in range(3))
+            elif regime == "vertical":
+                vertical_side = -1.0 if evader.z > 0.55 * self.inner.inner.term_cfg.z_max else 1.0
+                offset = tuple(4.0 * forward[i] + vertical_side * 14.0 * up[i] for i in range(3))
+            elif regime == "boundary":
+                term = self.inner.inner.term_cfg
+                x_margin = min(evader.x - term.x_min, term.x_max - evader.x)
+                y_margin = min(evader.y - term.y_min, term.y_max - evader.y)
+                if x_margin <= y_margin:
+                    outward = 1.0 if evader.x >= 0.0 else -1.0
+                    lateral = 1.0 if evader.y <= 0.0 else -1.0
+                    offset = (outward * 1.5, lateral * 8.0, 0.0)
+                else:
+                    outward = 1.0 if evader.y >= 0.0 else -1.0
+                    lateral = 1.0 if evader.x <= 0.0 else -1.0
+                    offset = (lateral * 8.0, outward * 1.5, 0.0)
+            else:
+                offset = tuple(-8.0 * forward[i] + 1.5 * right[i] for i in range(3))
+        elif regime == "flank":
             side = -1.0 if (self.continuous_lowlevel_steps // max(self.regime_duration, 1)) % 2 else 1.0
             offset = tuple(8.0 * forward[i] + side * 9.0 * right[i] for i in range(3))
         elif regime == "vertical":
@@ -519,6 +592,9 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         if scenario_name == CONTINUOUS_SHOWCASE_SCENARIO:
             self._use_showcase_bounds()
             start_state = SHOWCASE_START_STATE
+        elif scenario_name == SCRIPTED_SHOWCASE_SCENARIO:
+            self._use_showcase_bounds()
+            start_state = SCRIPTED_SHOWCASE_START_STATE
         else:
             self._use_base_bounds()
             start_state = CONTINUOUS_START_STATE
@@ -749,7 +825,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             self.scenario_set = str(options["scenario_set"])
 
         requested_name = str(options["scenario_name"]) if options and "scenario_name" in options else None
-        if self.scenario_set != CONTINUOUS_SHOWCASE_SCENARIO:
+        if self.scenario_set not in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO}:
             self._use_base_bounds()
         if self.scenario_set == "basic":
             base = requested_name or self._sample_basic()

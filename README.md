@@ -272,13 +272,15 @@ python -m src.evaluation.eval_option_sequence_search --episodes 2 --scenario-set
 
 高层 PPO 目标不是识别 S1/S2/S3/S4 标签，而是在复合威胁中学习 option 选择与切换。
 
-`--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）、`sequential`（单个 episode 内按阶段注入 rear/flank/boundary/vertical 威胁）、`continuous_pursuit`（严格连续动态追逃原型，不做 phase teleport，不把 regime label 加入 observation）、`continuous_showcase`（展示型连续追逃，用于生成长轨迹图，不作为主要量化结论）。
+`--scenario-set` 支持：`basic`（四基础场景）、`mixed`（加权抽样）、`composite`（真实复合威胁初始态）、`sequential`（单个 episode 内按阶段注入 rear/flank/boundary/vertical 威胁）、`continuous_pursuit`（严格连续动态追逃原型，不做 phase teleport，不把 regime label 加入 observation）、`continuous_showcase`（探索型连续追逃展示原型）、`scripted_showcase`（论文定性插图专用脚本化连续展示，不作为主要量化 benchmark）。
 
 `sequential` 用于验证真正的 option 切换：基础环境的中间 escape 不会自动完成 phase。每个 rear/flank/boundary/vertical phase 必须连续满足专属 geometry 条件后，环境才会注入下一阶段威胁；只有所有 phase 完成后才算最终 escaped。phase 名称、成功 streak 与失败统计仅写入 `info`，不会加入 observation。
 
 `continuous_pursuit` 用于最终连续追逃压力测试：evader 状态保持连续，regime 仅控制 pursuer 的施压方式（rear/flank/vertical/boundary），不再用“完成固定 phase”作为成功条件。当前 regime 由 state-driven threat manager 根据 observation geometry 实时选择：边界风险优先，其次按 rear/flank/vertical 威胁分数判断；固定 schedule 只在威胁分数都较低时作为 fallback。episode 到达 `--episode-lowlevel-steps` 后，只有未被捕获/未越界且最近窗口保持安全距离与非持续闭合，才判为 escaped；否则为 timeout。默认起点已经校准到更靠近场地中心且初始航向不再沿 +x 轴直冲边界；默认 boundary priority 采用 `enter=0.24`、`exit=0.32`，避免在安全余量约 0.28 时过早锁定 boundary，同时仍允许真正边界风险打断 regime hold。
 
 `continuous_showcase` 与 `continuous_pursuit` 分离：它使用更大的局部展示边界（默认 x/y 放大 `2.5x`、z 上界放大 `1.5x`）和中心区域起点，目标是生成连续、可读的长时间追逃轨迹，展示 option 组合潜力；它不替代 `sequential` 主实验，也不作为严格 continuous 量化结论。
+
+`scripted_showcase` 只用于论文定性可视化：evader/pursuer 状态保持连续，不做 phase injection、不 teleport、不重置位置；regime 使用固定展示脚本 `rear(0-80) -> flank(80-160) -> vertical(160-240) -> boundary(240-320) -> rear(320-400) -> flank(400-500)`，并用 `rear->pi1`、`flank->pi2`、`vertical->pi4`、`boundary->pi3` 的 scripted selector 生成多策略切换轨迹。它使用更大的局部展示边界（x/y 至少 `4.0x`、z 至少 `2.0x`），仅用于 qualitative visualization，不用于主量化结论。
 
 连续追逃诊断与评估示例：
 ```powershell
@@ -290,6 +292,8 @@ python -m src.evaluation.eval_highlevel_selector --mode highlevel --episodes 2 -
 python -m src.evaluation.inspect_continuous_pursuit --scenario-set continuous_showcase --episodes 1 --episode-lowlevel-steps 300 --print-every 20
 python -m src.evaluation.eval_highlevel_selector --mode regime_oracle --episodes 20 --scenario-set continuous_showcase --episode-lowlevel-steps 500
 python -m src.evaluation.plot_highlevel_trajectories --mode regime_oracle --scenario-set continuous_showcase --episodes 5 --max-plots 3 --episode-lowlevel-steps 500
+python -m src.evaluation.inspect_continuous_pursuit --scenario-set scripted_showcase --episodes 1 --episode-lowlevel-steps 500 --print-every 80
+python -m src.evaluation.plot_highlevel_trajectories --mode scripted_showcase --scenario-set scripted_showcase --episodes 5 --max-plots 3 --episode-lowlevel-steps 500
 # 可用 --min-regime-hold-steps / --boundary-priority-enter / --boundary-priority-exit / --regime-schedule / --pursuer-speed-ratio 调整连续追逃诊断强度；默认 pursuer-speed-ratio=1.20，boundary enter/exit=0.24/0.32。
 ```
 

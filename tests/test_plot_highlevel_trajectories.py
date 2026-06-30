@@ -209,3 +209,28 @@ def test_save_plot_supports_topdown_without_dense_text(tmp_path):
     )
     assert output.exists()
     assert output.name.endswith("_topdown.png")
+
+
+def test_scripted_showcase_rollout_uses_regime_to_strategy_mapping():
+    env = HighLevelOptionEnv(
+        [ZeroModel()] * 4,
+        option_duration=1,
+        max_highlevel_steps=20,
+        scenario_set="scripted_showcase",
+        episode_lowlevel_steps=170,
+    )
+    recorder = TrajectoryRecorder(env)
+    recorder.attach()
+    result = rollout_episode(
+        env,
+        recorder,
+        episode_id=13,
+        mode="scripted_showcase",
+        fixed_policy=0,
+        high_model=None,
+        scenario_set="scripted_showcase",
+    )
+    assert result.scenario == "scripted_showcase"
+    assert result.lowlevel_steps > 0
+    assert len(set(result.option_sequence)) >= 3
+    assert result.option_sequence[:3] == [0, 1, 3]

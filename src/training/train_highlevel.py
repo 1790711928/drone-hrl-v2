@@ -20,7 +20,7 @@ def main() -> None:
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="composite")
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)

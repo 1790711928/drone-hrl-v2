@@ -5,7 +5,7 @@ import random
 from collections import Counter
 from pathlib import Path
 
-from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, HighLevelOptionEnv
+from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, HighLevelOptionEnv
 
 
 def heuristic_option(
@@ -63,7 +63,7 @@ def continuous_diagnostic_option(info: dict, mode: str) -> int:
     min_margin = float(info.get("min_boundary_margin", 1.0))
     boundary_enter = float(info.get("boundary_priority_enter", 0.24))
     boundary_active = bool(info.get("boundary_priority_active", False))
-    if mode == "regime_oracle":
+    if mode in {"regime_oracle", "scripted_showcase"}:
         return {"rear": 0, "flank": 1, "boundary": 2, "vertical": 3}.get(regime, 2)
     if min_margin <= boundary_enter or boundary_active or regime == "boundary":
         return 2
@@ -79,11 +79,11 @@ def continuous_diagnostic_option(info: dict, mode: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate fixed/random/heuristic/high-level selector on scenario sets")
     parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "highlevel", "continuous_heuristic", "regime_oracle"], default="fixed")
+    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "highlevel", "continuous_heuristic", "regime_oracle", "scripted_showcase"], default="fixed")
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="composite")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
@@ -102,11 +102,13 @@ def main() -> None:
     parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
     parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
-    if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
+    if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
 
-    if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
-        parser.error(f"--mode {args.mode} requires --scenario-set continuous_pursuit or continuous_showcase")
+    if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
+        parser.error(f"--mode {args.mode} requires a continuous scenario set")
+    if args.mode == "scripted_showcase" and args.scenario_set != SCRIPTED_SHOWCASE_SCENARIO:
+        parser.error("--mode scripted_showcase requires --scenario-set scripted_showcase")
 
     from stable_baselines3 import PPO, SAC
 
@@ -207,7 +209,7 @@ def main() -> None:
                     vertical_threshold=args.vertical_threshold,
                     rear_distance_threshold=args.rear_distance_threshold,
                 )
-            elif args.mode in {"continuous_heuristic", "regime_oracle"}:
+            elif args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"}:
                 action = continuous_diagnostic_option(info, args.mode)
             else:
                 assert high_model is not None
@@ -344,7 +346,7 @@ def main() -> None:
     print(f"avg_completed_phases={completed_phases_total / n:.3f}")
     print(f"phase_success_by_phase_type={phase_success_by_type}")
     print(f"phase_failure_by_phase_type={phase_failure_by_type}")
-    if args.mode in {"continuous_heuristic", "regime_oracle"}:
+    if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"}:
         if succ / n > max(oob / n, cap / n):
             print("controllability_note=diagnostic selector is outperforming failure modes; continuous fine-tune is plausible.")
         else:

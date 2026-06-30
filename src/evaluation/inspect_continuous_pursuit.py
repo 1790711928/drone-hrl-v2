@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from src.training.highlevel_env import CONTINUOUS_SHOWCASE_SCENARIO, HighLevelOptionEnv
+from src.training.highlevel_env import CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, HighLevelOptionEnv
 
 
 class ZeroModel:
@@ -61,7 +61,7 @@ def print_row(row: dict[str, float | str | int | bool]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect regime geometry in the continuous_pursuit benchmark")
-    parser.add_argument("--scenario-set", choices=["continuous_pursuit", "continuous_showcase"], default="continuous_pursuit")
+    parser.add_argument("--scenario-set", choices=["continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="continuous_pursuit")
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
@@ -75,7 +75,7 @@ def main() -> None:
     parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
     parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
-    if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
+    if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
 
     env = HighLevelOptionEnv(

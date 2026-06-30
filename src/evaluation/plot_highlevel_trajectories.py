@@ -8,10 +8,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, HighLevelOptionEnv
+from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, HighLevelOptionEnv
 
 
 OPTION_NAMES = ("pi1", "pi2", "pi3", "pi4")
+STRATEGY_LABELS = {
+    0: "Rear strategy",
+    1: "Flank strategy",
+    2: "Boundary strategy",
+    3: "Vertical strategy",
+}
+OPTION_TO_STRATEGY = {name: STRATEGY_LABELS[index] for index, name in enumerate(OPTION_NAMES)}
 LOW_MODEL_FILENAMES = (
     "sac_low_1_rear_close_threat.zip",
     "sac_low_2_flank_threat.zip",
@@ -253,7 +260,7 @@ def rollout_episode(
             option = fixed_policy
         elif mode == "random":
             option = random.randint(0, 3)
-        elif mode == "regime_oracle":
+        elif mode in {"regime_oracle", "scripted_showcase"}:
             option = {"rear": 0, "flank": 1, "boundary": 2, "vertical": 3}.get(str(info.get("regime_name", "rear")), 2)
         elif mode == "continuous_heuristic":
             regime = str(info.get("regime_name", "rear"))
@@ -475,7 +482,10 @@ def save_plot(
     for marker_index, option_name in episode.option_switches:
         point = episode.evader_points[marker_index]
         color, marker = option_styles.get(option_name, ("tab:orange", "o"))
-        label = f"option switch {option_name}" if option_name not in seen_option_names else None
+        if episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase":
+            label = OPTION_TO_STRATEGY.get(option_name, option_name) if option_name not in seen_option_names else None
+        else:
+            label = f"option switch {option_name}" if option_name not in seen_option_names else None
         seen_option_names.add(option_name)
         _scatter_point(ax, point, view=view, color=color, marker=marker, s=34, alpha=0.85, label=label, zorder=6)
     for regime_offset, (marker_index, regime_name) in enumerate(episode.regime_starts):
@@ -509,7 +519,10 @@ def save_plot(
         ax.set_aspect("equal", adjustable="box")
     else:
         ax.set_zlabel("z")
-    option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
+    if episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase":
+        option_sequence = "->".join(STRATEGY_LABELS[index] for index in episode.option_sequence)
+    else:
+        option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
     if is_continuous:
         first_line = f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | lowlevel_steps={episode.lowlevel_steps}"
     else:
@@ -529,8 +542,8 @@ def save_plot(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot high-level option trajectories for presentation")
-    parser.add_argument("--mode", choices=["highlevel", "fixed", "random", "continuous_heuristic", "regime_oracle"], default="highlevel")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase"], default="sequential")
+    parser.add_argument("--mode", choices=["highlevel", "fixed", "random", "continuous_heuristic", "regime_oracle", "scripted_showcase"], default="highlevel")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="sequential")
     parser.add_argument("--scenario-name", default=None)
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--fixed-policy", type=int, choices=range(4), default=2)
@@ -567,7 +580,7 @@ def main() -> None:
     parser.add_argument("--min-unique-options", type=int, default=1)
     parser.add_argument("--max-rollout-attempts", type=int, default=0)
     args = parser.parse_args()
-    if args.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
+    if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
 
     if args.episodes <= 0:
@@ -582,8 +595,10 @@ def main() -> None:
         parser.error("episode filter thresholds must be non-negative and --min-unique-options must be >= 1")
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
-    if args.mode in {"continuous_heuristic", "regime_oracle"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
-        parser.error(f"--mode {args.mode} requires --scenario-set continuous_pursuit or continuous_showcase")
+    if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
+        parser.error(f"--mode {args.mode} requires a continuous scenario set")
+    if args.mode == "scripted_showcase" and args.scenario_set != SCRIPTED_SHOWCASE_SCENARIO:
+        parser.error("--mode scripted_showcase requires --scenario-set scripted_showcase")
     if importlib.util.find_spec("matplotlib") is None:
         print("matplotlib is not installed. Please install matplotlib to save high-level trajectory plots.")
         return

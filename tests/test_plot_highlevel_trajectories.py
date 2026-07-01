@@ -11,6 +11,8 @@ from src.evaluation.plot_highlevel_trajectories import (
     sample_points,
     save_plot,
     select_episodes_for_plot,
+    select_best_showcase_episodes,
+    showcase_selection_metrics,
     trajectory_segments,
 )
 from src.training.highlevel_env import HighLevelOptionEnv
@@ -134,6 +136,51 @@ def test_selection_filters_for_showcase_quality():
     )
     assert [item.episode_id for item in selected] == [2]
     assert strong.summary_row()["unique_option_count"] == 3
+
+
+def test_showcase_score_prefers_balanced_close_multi_strategy_rollout():
+    weak = EpisodePlotData(
+        scenario="scripted_showcase",
+        mode="scripted_showcase",
+        episode_id=1,
+        outcome="out_of_bounds",
+        success=False,
+        switch_count=1,
+        option_sequence=[0, 2],
+        completed_phases=0,
+        evader_points=[(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (200.0, 0.0, 0.0)],
+        pursuer_points=[(-80.0, 0.0, 0.0), (-70.0, 0.0, 0.0), (-60.0, 0.0, 0.0)],
+        option_switches=[(0, "pi1"), (1, "pi3")],
+        phase_starts=[(0, "start")],
+        regime_starts=[(0, "rear"), (1, "boundary")],
+        boundary_priority_points=[],
+        lowlevel_steps=500,
+        showcase_seed=1,
+    )
+    strong = EpisodePlotData(
+        scenario="scripted_showcase",
+        mode="scripted_showcase",
+        episode_id=2,
+        outcome="escaped",
+        success=True,
+        switch_count=5,
+        option_sequence=[0, 1, 3, 2],
+        completed_phases=0,
+        evader_points=[(0.0, 0.0, 0.0), (20.0, 5.0, 6.0), (35.0, 28.0, 12.0), (45.0, 40.0, 30.0), (60.0, 48.0, 36.0)],
+        pursuer_points=[(-5.0, -2.0, -1.0), (16.0, 4.0, 5.0), (32.0, 24.0, 10.0), (42.0, 36.0, 28.0), (55.0, 44.0, 34.0)],
+        option_switches=[(0, "pi1"), (1, "pi2"), (2, "pi4"), (3, "pi3")],
+        phase_starts=[(0, "start")],
+        regime_starts=[(0, "rear"), (1, "flank"), (2, "vertical"), (3, "boundary")],
+        boundary_priority_points=[],
+        lowlevel_steps=380,
+        showcase_seed=2,
+    )
+    selected = select_best_showcase_episodes([weak, strong], max_plots=1)
+    assert selected == [strong]
+    assert strong.selected_flag
+    assert strong.selected_rank == 1
+    assert showcase_selection_metrics(strong)["selection_score"] > showcase_selection_metrics(weak)["selection_score"]
+    assert strong.summary_row()["selected_flag"] == 1
 
 
 def test_rollout_accepts_specific_scenario_name():

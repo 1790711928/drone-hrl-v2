@@ -174,7 +174,7 @@ SHOWCASE_START_STATE = Env3DState(
 )
 SCRIPTED_SHOWCASE_START_STATE = Env3DState(
     evader=Agent3DState(x=0.0, y=0.0, z=150.0, speed=9.3, yaw=0.80, pitch=0.0),
-    pursuer=Agent3DState(x=-14.0, y=-8.0, z=144.0, speed=10.8, yaw=0.80, pitch=0.02),
+    pursuer=Agent3DState(x=-30.0, y=-18.0, z=142.0, speed=10.5, yaw=0.80, pitch=0.02),
     step_count=0,
 )
 
@@ -262,6 +262,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info: dict[str, Any] = {}
+        self.current_showcase_seed: int | None = None
 
     def _use_base_bounds(self) -> None:
         self.inner.inner.term_cfg = replace(self._base_term_cfg)
@@ -521,10 +522,10 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             script_index = SCRIPTED_SHOWCASE_SCHEDULE.index(regime) if regime in SCRIPTED_SHOWCASE_SCHEDULE else 0
             if regime == "flank":
                 side = -1.0 if script_index % 2 else 1.0
-                offset = tuple(10.0 * forward[i] + side * 12.0 * right[i] for i in range(3))
+                offset = tuple(5.0 * forward[i] + side * 5.5 * right[i] for i in range(3))
             elif regime == "vertical":
                 vertical_side = -1.0 if evader.z > 0.55 * self.inner.inner.term_cfg.z_max else 1.0
-                offset = tuple(4.0 * forward[i] + vertical_side * 14.0 * up[i] for i in range(3))
+                offset = tuple(2.5 * forward[i] + vertical_side * 7.0 * up[i] for i in range(3))
             elif regime == "boundary":
                 term = self.inner.inner.term_cfg
                 x_margin = min(evader.x - term.x_min, term.x_max - evader.x)
@@ -532,13 +533,13 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 if x_margin <= y_margin:
                     outward = 1.0 if evader.x >= 0.0 else -1.0
                     lateral = 1.0 if evader.y <= 0.0 else -1.0
-                    offset = (outward * 1.5, lateral * 8.0, 0.0)
+                    offset = (outward * 0.8, lateral * 4.5, 0.0)
                 else:
                     outward = 1.0 if evader.y >= 0.0 else -1.0
                     lateral = 1.0 if evader.x <= 0.0 else -1.0
-                    offset = (lateral * 8.0, outward * 1.5, 0.0)
+                    offset = (lateral * 4.5, outward * 0.8, 0.0)
             else:
-                offset = tuple(-8.0 * forward[i] + 1.5 * right[i] for i in range(3))
+                offset = tuple(-4.0 * forward[i] + 1.0 * right[i] for i in range(3))
         elif regime == "flank":
             side = -1.0 if (self.continuous_lowlevel_steps // max(self.regime_duration, 1)) % 2 else 1.0
             offset = tuple(8.0 * forward[i] + side * 9.0 * right[i] for i in range(3))
@@ -576,6 +577,21 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             pitch=evader.pitch,
         )
 
+    def _scripted_showcase_start_state(self) -> Env3DState:
+        ev = SCRIPTED_SHOWCASE_START_STATE.evader
+        pu = SCRIPTED_SHOWCASE_START_STATE.pursuer
+        ev_x = float(self.np_random.uniform(-10.0, 10.0))
+        ev_y = float(self.np_random.uniform(-10.0, 10.0))
+        ev_z = float(ev.z + self.np_random.uniform(-8.0, 8.0))
+        ev_yaw = float(ev.yaw + self.np_random.uniform(-0.18, 0.18))
+        ev_pitch = float(ev.pitch + self.np_random.uniform(-0.015, 0.015))
+        rel_x = pu.x - ev.x + float(self.np_random.uniform(-4.0, 4.0))
+        rel_y = pu.y - ev.y + float(self.np_random.uniform(-4.0, 4.0))
+        rel_z = pu.z - ev.z + float(self.np_random.uniform(-3.0, 3.0))
+        evader = replace(ev, x=ev_x, y=ev_y, z=ev_z, yaw=ev_yaw, pitch=ev_pitch)
+        pursuer = replace(pu, x=ev_x + rel_x, y=ev_y + rel_y, z=ev_z + rel_z, yaw=ev_yaw, pitch=ev_pitch + 0.02)
+        return Env3DState(evader=evader, pursuer=pursuer, step_count=0)
+
     def _reset_continuous(self, scenario_name: str) -> tuple[np.ndarray, dict[str, Any]]:
         self.current_scenario_name = scenario_name
         self.continuous_lowlevel_steps = 0
@@ -594,7 +610,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             start_state = SHOWCASE_START_STATE
         elif scenario_name == SCRIPTED_SHOWCASE_SCENARIO:
             self._use_showcase_bounds()
-            start_state = SCRIPTED_SHOWCASE_START_STATE
+            start_state = self._scripted_showcase_start_state()
         else:
             self._use_base_bounds()
             start_state = CONTINUOUS_START_STATE
@@ -609,6 +625,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "continuous_lowlevel_steps": 0,
             "regime_coverage_rate": len(self.continuous_regimes_seen) / len(set(self.regime_schedule)),
             "boundary_priority_rate": 0.0,
+            "showcase_seed": self.current_showcase_seed if scenario_name == SCRIPTED_SHOWCASE_SCENARIO else "",
         }
 
     def _continuous_recent_metrics(self) -> tuple[float, float]:
@@ -637,6 +654,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "boundary_priority_rate": self.continuous_boundary_priority_steps / max(self.continuous_lowlevel_steps, 1),
             "state_driven_regime_rate": self.continuous_state_driven_steps / max(self.continuous_lowlevel_steps, 1),
             "state_driven_regime_switch_count": self.continuous_regime_switch_count,
+            "showcase_seed": self.current_showcase_seed if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else "",
         })
         return info
 
@@ -662,10 +680,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             env.env_cfg.pitch_rate_max,
         )
         target = self._continuous_pursuer_target(evader_next, regime)
+        pursuer_speed_ratio = 1.35 if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else self.continuous_pursuer_speed_ratio
         pu_accel, pu_yaw_rate, pu_pitch_rate = rule_based_pursuer_control(
             target,
             env.state.pursuer,
-            self.continuous_pursuer_speed_ratio,
+            pursuer_speed_ratio,
         )
         pursuer_next = step_kinematics(
             env.state.pursuer,
@@ -820,9 +839,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
+        self.current_showcase_seed = seed if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else None
 
         if options and "scenario_set" in options:
             self.scenario_set = str(options["scenario_set"])
+        self.current_showcase_seed = seed if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else None
 
         requested_name = str(options["scenario_name"]) if options and "scenario_name" in options else None
         if self.scenario_set not in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO}:

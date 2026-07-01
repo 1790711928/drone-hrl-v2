@@ -37,6 +37,7 @@ SUMMARY_FIELDS = (
     "option_sequence",
     "actual_regime_sequence",
     "showcase_script",
+    "showcase_seed",
     "completed_phases",
     "lowlevel_steps",
 )
@@ -93,6 +94,29 @@ def boundary_priority_starts(points: list[int]) -> list[int]:
             starts.append(index)
         previous = index
     return starts
+
+
+def option_trajectory_segments(option_switches: list[tuple[int, str]], point_count: int) -> list[tuple[int, int, str]]:
+    if point_count <= 0:
+        return []
+    starts = sorted((max(0, min(point_count - 1, index)), option_name) for index, option_name in option_switches)
+    if not starts or starts[0][0] != 0:
+        starts.insert(0, (0, "pi1"))
+    segments: list[tuple[int, int, str]] = []
+    for offset, (start, option_name) in enumerate(starts):
+        next_start = starts[offset + 1][0] if offset + 1 < len(starts) else point_count
+        end = max(start, next_start - 1)
+        segments.append((start, end, option_name))
+    return segments
+
+
+def pursuit_link_indices(point_count: int, interval: int) -> list[int]:
+    if point_count <= 1 or interval <= 0:
+        return []
+    indices = list(range(0, point_count, interval))
+    if indices[-1] != point_count - 1:
+        indices.append(point_count - 1)
+    return indices
 
 
 def auto_plot_bounds(
@@ -231,6 +255,7 @@ class EpisodePlotData:
     regime_starts: list[tuple[int, str]]
     boundary_priority_points: list[int]
     lowlevel_steps: int
+    showcase_seed: int | str = ""
 
     def summary_row(self) -> dict[str, Any]:
         option_sequence = "->".join(OPTION_NAMES[index] for index in self.option_sequence)
@@ -246,6 +271,7 @@ class EpisodePlotData:
             "option_sequence": option_sequence,
             "actual_regime_sequence": actual_regime_sequence,
             "showcase_script": SCRIPTED_SHOWCASE_SCRIPT_NAME if self.scenario == SCRIPTED_SHOWCASE_SCENARIO or self.mode == "scripted_showcase" else "",
+            "showcase_seed": self.showcase_seed,
             "completed_phases": self.completed_phases,
             "lowlevel_steps": self.lowlevel_steps,
         }
@@ -265,7 +291,8 @@ def rollout_episode(
     reset_options = {"scenario_set": scenario_set}
     if scenario_name:
         reset_options["scenario_name"] = scenario_name
-    obs, info = env.reset(options=reset_options)
+    reset_seed = episode_id if scenario_set == SCRIPTED_SHOWCASE_SCENARIO else None
+    obs, info = env.reset(seed=reset_seed, options=reset_options)
     scenario = str(info.get("scenario_name", "unknown"))
     recorder.reset(str(info.get("phase_name", "start")))
     if scenario_set in CONTINUOUS_SCENARIO_SETS:
@@ -328,6 +355,7 @@ def rollout_episode(
         regime_starts=list(recorder.regime_starts),
         boundary_priority_points=list(recorder.boundary_priority_points),
         lowlevel_steps=int(info.get("continuous_lowlevel_steps", 0)),
+        showcase_seed=info.get("showcase_seed", ""),
     )
 
 
@@ -430,6 +458,8 @@ def save_plot(
     max_annotations: int = 8,
     no_text_annotations: bool = False,
     show_callouts: bool = False,
+    show_pursuit_links: bool = True,
+    pursuit_link_interval: int = 60,
     view: str = "3d",
 ) -> Path:
     import matplotlib.pyplot as plt
@@ -447,15 +477,20 @@ def save_plot(
     for segment_index, (start, end, _) in enumerate(segments):
         evader_segment = episode.evader_points[start : end + 1]
         pursuer_segment = sample_points(episode.pursuer_points[start : end + 1], plot_sample_rate)
-        _plot_segment(
-            ax,
-            evader_segment,
-            color="tab:blue",
-            linestyle="-",
-            linewidth=2.6,
-            label="evader" if segment_index == 0 else None,
-            view=view,
-        )
+        if is_scripted_showcase:
+            # Scripted showcase colors the evader trajectory by the active strategy,
+            # making the executed option intervals visible without in-plot text.
+            pass
+        else:
+            _plot_segment(
+                ax,
+                evader_segment,
+                color="tab:blue",
+                linestyle="-",
+                linewidth=2.6,
+                label="evader" if segment_index == 0 else None,
+                view=view,
+            )
         _plot_segment(
             ax,
             pursuer_segment,
@@ -466,6 +501,43 @@ def save_plot(
             alpha=0.45,
             view=view,
         )
+
+    if is_scripted_showcase:
+        seen_strategy_labels: set[str] = set()
+        option_styles_for_lines = {
+            "pi1": ("tab:orange", "Rear strategy"),
+            "pi2": ("tab:purple", "Flank strategy"),
+            "pi3": ("tab:brown", "Boundary strategy"),
+            "pi4": ("tab:pink", "Vertical strategy"),
+        }
+        for start, end, option_name in option_trajectory_segments(episode.option_switches, len(episode.evader_points)):
+            color, label = option_styles_for_lines.get(option_name, ("tab:blue", option_name))
+            segment_points = episode.evader_points[start : end + 1]
+            if len(segment_points) < 2:
+                continue
+            _plot_segment(
+                ax,
+                segment_points,
+                color=color,
+                linestyle="-",
+                linewidth=2.8,
+                label=label if label not in seen_strategy_labels else None,
+                view=view,
+            )
+            seen_strategy_labels.add(label)
+
+    if show_pursuit_links and is_scripted_showcase:
+        for link_offset, index in enumerate(pursuit_link_indices(len(episode.evader_points), pursuit_link_interval)):
+            _plot_segment(
+                ax,
+                [episode.evader_points[index], episode.pursuer_points[index]],
+                color="0.55",
+                linestyle="-",
+                linewidth=0.7,
+                label="pursuit link" if link_offset == 0 else None,
+                alpha=0.28,
+                view=view,
+            )
 
     if break_at_phase_transition and show_phase_reset_jump and not is_continuous:
         for jump_index, (end_index, start_index) in enumerate(phase_reset_jumps(segments)):
@@ -509,7 +581,8 @@ def save_plot(
         else:
             label = f"option switch {option_name}" if option_name not in seen_option_names else None
         seen_option_names.add(option_name)
-        _scatter_point(ax, point, view=view, color=color, marker=marker, s=34, alpha=0.85, label=label, zorder=6)
+        marker_size = 20 if is_scripted_showcase else 34
+        _scatter_point(ax, point, view=view, color=color, marker=marker, s=marker_size, alpha=0.75, label=label, zorder=6)
 
     if show_callouts and is_scripted_showcase:
         for callout_index, (marker_index, option_name) in enumerate(episode.option_switches[: max(0, min(max_annotations, 6))]):
@@ -620,6 +693,8 @@ def main() -> None:
     parser.add_argument("--max-annotations", type=int, default=8)
     parser.add_argument("--no-text-annotations", action="store_true")
     parser.add_argument("--show-callouts", action="store_true")
+    parser.add_argument("--show-pursuit-links", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--pursuit-link-interval", type=int, default=60)
     parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
     parser.add_argument("--min-switch-count", type=int, default=0)
     parser.add_argument("--min-lowlevel-steps", type=int, default=0)
@@ -639,6 +714,8 @@ def main() -> None:
         parser.error("--max-annotations must be non-negative")
     if args.min_switch_count < 0 or args.min_lowlevel_steps < 0 or args.min_unique_options < 1:
         parser.error("episode filter thresholds must be non-negative and --min-unique-options must be >= 1")
+    if args.pursuit_link_interval <= 0:
+        parser.error("--pursuit-link-interval must be positive")
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
     if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
@@ -742,13 +819,15 @@ def main() -> None:
             max_annotations=args.max_annotations,
             no_text_annotations=args.no_text_annotations,
             show_callouts=args.show_callouts,
+            show_pursuit_links=args.show_pursuit_links,
+            pursuit_link_interval=args.pursuit_link_interval,
             view=args.view,
         )
         option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
         print(
             f"Saved plot: {saved_path} | lowlevel_steps={episode.lowlevel_steps} | "
             f"switch_count={episode.switch_count} | unique_strategies={len(set(episode.option_sequence))} | "
-            f"outcome={episode.outcome} | option_sequence={option_sequence}"
+            f"outcome={episode.outcome} | seed={episode.showcase_seed} | option_sequence={option_sequence}"
         )
 
     plot_dir.mkdir(parents=True, exist_ok=True)

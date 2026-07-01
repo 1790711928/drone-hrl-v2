@@ -458,7 +458,10 @@ def save_plot(
     max_annotations: int = 8,
     no_text_annotations: bool = False,
     show_callouts: bool = False,
-    show_pursuit_links: bool = True,
+    show_strategy_switch_markers: bool = False,
+    show_regime_switch_markers: bool = False,
+    show_boundary_priority_markers: bool = False,
+    show_pursuit_links: bool = False,
     pursuit_link_interval: int = 60,
     view: str = "3d",
 ) -> Path:
@@ -469,6 +472,9 @@ def save_plot(
     is_continuous = episode.scenario in CONTINUOUS_SCENARIO_SETS
     is_scripted_showcase = episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase"
     suppress_text_annotations = no_text_annotations or (is_scripted_showcase and not show_callouts)
+    draw_strategy_switch_markers = show_strategy_switch_markers or not is_scripted_showcase
+    draw_regime_switch_markers = show_regime_switch_markers or not is_scripted_showcase
+    draw_boundary_priority_markers = show_boundary_priority_markers or not is_scripted_showcase
     segments = (
         trajectory_segments(episode.phase_starts, len(episode.evader_points))
         if break_at_phase_transition and not is_continuous
@@ -497,7 +503,7 @@ def save_plot(
             color="tab:red",
             linestyle="--",
             linewidth=1.4,
-            label=f"pursuer (sample/{max(plot_sample_rate, 1)})" if segment_index == 0 else None,
+            label=("pursuer" if is_scripted_showcase else f"pursuer (sample/{max(plot_sample_rate, 1)})") if segment_index == 0 else None,
             alpha=0.45,
             view=view,
         )
@@ -573,16 +579,17 @@ def save_plot(
             _annotate_point(ax, point, f" phase:{phase_name}", view=view, color="tab:purple", fontsize=8)
             annotation_count += 1
     seen_option_names: set[str] = set()
-    for marker_index, option_name in episode.option_switches:
-        point = episode.evader_points[marker_index]
-        color, marker = option_styles.get(option_name, ("tab:orange", "o"))
-        if episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase":
-            label = OPTION_TO_STRATEGY.get(option_name, option_name) if option_name not in seen_option_names else None
-        else:
-            label = f"option switch {option_name}" if option_name not in seen_option_names else None
-        seen_option_names.add(option_name)
-        marker_size = 20 if is_scripted_showcase else 34
-        _scatter_point(ax, point, view=view, color=color, marker=marker, s=marker_size, alpha=0.75, label=label, zorder=6)
+    if draw_strategy_switch_markers:
+        for marker_index, option_name in episode.option_switches:
+            point = episode.evader_points[marker_index]
+            color, marker = option_styles.get(option_name, ("tab:orange", "o"))
+            if episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase":
+                label = OPTION_TO_STRATEGY.get(option_name, option_name) if option_name not in seen_option_names else None
+            else:
+                label = f"option switch {option_name}" if option_name not in seen_option_names else None
+            seen_option_names.add(option_name)
+            marker_size = 20 if is_scripted_showcase else 34
+            _scatter_point(ax, point, view=view, color=color, marker=marker, s=marker_size, alpha=0.75, label=label, zorder=6)
 
     if show_callouts and is_scripted_showcase:
         for callout_index, (marker_index, option_name) in enumerate(episode.option_switches[: max(0, min(max_annotations, 6))]):
@@ -596,25 +603,27 @@ def save_plot(
             _plot_segment(ax, [point, label_point], color=color, linestyle=":", linewidth=0.8, label=None, alpha=0.65, view=view)
             _annotate_point(ax, label_point, label_text, view=view, color=color, fontsize=8)
 
-    for regime_offset, (marker_index, regime_name) in enumerate(episode.regime_starts):
-        point = episode.evader_points[marker_index]
-        _scatter_point(ax, point, view=view, color="tab:cyan", marker="s", s=38, alpha=0.80, label="regime switch" if regime_offset == 0 else None, zorder=5)
-        if not suppress_text_annotations and annotation_count < max_annotations:
-            _annotate_point(ax, point, f" {regime_name}", view=view, color="teal", fontsize=8)
-            annotation_count += 1
-    for boundary_offset, marker_index in enumerate(boundary_priority_starts(episode.boundary_priority_points)):
-        point = episode.evader_points[marker_index]
-        _scatter_point(
-            ax,
-            point,
-            view=view,
-            color="darkorange",
-            marker="*",
-            s=80,
-            alpha=0.95,
-            label="boundary priority start" if boundary_offset == 0 else None,
-            zorder=7,
-        )
+    if draw_regime_switch_markers:
+        for regime_offset, (marker_index, regime_name) in enumerate(episode.regime_starts):
+            point = episode.evader_points[marker_index]
+            _scatter_point(ax, point, view=view, color="tab:cyan", marker="s", s=38, alpha=0.80, label="regime switch" if regime_offset == 0 else None, zorder=5)
+            if not suppress_text_annotations and annotation_count < max_annotations:
+                _annotate_point(ax, point, f" {regime_name}", view=view, color="teal", fontsize=8)
+                annotation_count += 1
+    if draw_boundary_priority_markers:
+        for boundary_offset, marker_index in enumerate(boundary_priority_starts(episode.boundary_priority_points)):
+            point = episode.evader_points[marker_index]
+            _scatter_point(
+                ax,
+                point,
+                view=view,
+                color="darkorange",
+                marker="*",
+                s=80,
+                alpha=0.95,
+                label="boundary priority start" if boundary_offset == 0 else None,
+                zorder=7,
+            )
 
     bounds = auto_plot_bounds(episode.evader_points, episode.pursuer_points)
     if view != "topdown":
@@ -693,7 +702,10 @@ def main() -> None:
     parser.add_argument("--max-annotations", type=int, default=8)
     parser.add_argument("--no-text-annotations", action="store_true")
     parser.add_argument("--show-callouts", action="store_true")
-    parser.add_argument("--show-pursuit-links", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--show-strategy-switch-markers", action="store_true")
+    parser.add_argument("--show-regime-switch-markers", action="store_true")
+    parser.add_argument("--show-boundary-priority-markers", action="store_true")
+    parser.add_argument("--show-pursuit-links", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--pursuit-link-interval", type=int, default=60)
     parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
     parser.add_argument("--min-switch-count", type=int, default=0)
@@ -819,6 +831,9 @@ def main() -> None:
             max_annotations=args.max_annotations,
             no_text_annotations=args.no_text_annotations,
             show_callouts=args.show_callouts,
+            show_strategy_switch_markers=args.show_strategy_switch_markers,
+            show_regime_switch_markers=args.show_regime_switch_markers,
+            show_boundary_priority_markers=args.show_boundary_priority_markers,
             show_pursuit_links=args.show_pursuit_links,
             pursuit_link_interval=args.pursuit_link_interval,
             view=args.view,

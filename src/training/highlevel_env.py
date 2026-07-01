@@ -520,26 +520,40 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         forward, right, up = _body_axes(evader)
         if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
             script_index = SCRIPTED_SHOWCASE_SCHEDULE.index(regime) if regime in SCRIPTED_SHOWCASE_SCHEDULE else 0
+            current_distance = relative_distance(self.inner.inner.state) if self.inner.inner.state is not None else 0.0
+            lead = 5.0 if current_distance <= 70.0 else 8.0
             if regime == "flank":
                 side = -1.0 if script_index % 2 else 1.0
-                offset = tuple(5.0 * forward[i] + side * 5.5 * right[i] for i in range(3))
+                bias_scale = 1.0 if current_distance <= 70.0 else 0.25
+                offset = tuple(lead * forward[i] + side * 2.8 * bias_scale * right[i] for i in range(3))
             elif regime == "vertical":
                 vertical_side = -1.0 if evader.z > 0.55 * self.inner.inner.term_cfg.z_max else 1.0
-                offset = tuple(2.5 * forward[i] + vertical_side * 7.0 * up[i] for i in range(3))
+                bias_scale = 1.0 if current_distance <= 70.0 else 0.25
+                offset = tuple(lead * forward[i] + vertical_side * 3.5 * bias_scale * up[i] for i in range(3))
             elif regime == "boundary":
                 term = self.inner.inner.term_cfg
                 x_margin = min(evader.x - term.x_min, term.x_max - evader.x)
                 y_margin = min(evader.y - term.y_min, term.y_max - evader.y)
+                bias_scale = 1.0 if current_distance <= 70.0 else 0.20
                 if x_margin <= y_margin:
                     outward = 1.0 if evader.x >= 0.0 else -1.0
                     lateral = 1.0 if evader.y <= 0.0 else -1.0
-                    offset = (outward * 0.8, lateral * 4.5, 0.0)
+                    offset = (
+                        lead * forward[0] + outward * 0.5 * bias_scale,
+                        lead * forward[1] + lateral * 2.5 * bias_scale,
+                        lead * forward[2],
+                    )
                 else:
                     outward = 1.0 if evader.y >= 0.0 else -1.0
                     lateral = 1.0 if evader.x <= 0.0 else -1.0
-                    offset = (lateral * 4.5, outward * 0.8, 0.0)
+                    offset = (
+                        lead * forward[0] + lateral * 2.5 * bias_scale,
+                        lead * forward[1] + outward * 0.5 * bias_scale,
+                        lead * forward[2],
+                    )
             else:
-                offset = tuple(-4.0 * forward[i] + 1.0 * right[i] for i in range(3))
+                bias_scale = 1.0 if current_distance <= 70.0 else 0.20
+                offset = tuple(lead * forward[i] + 0.7 * bias_scale * right[i] for i in range(3))
         elif regime == "flank":
             side = -1.0 if (self.continuous_lowlevel_steps // max(self.regime_duration, 1)) % 2 else 1.0
             offset = tuple(8.0 * forward[i] + side * 9.0 * right[i] for i in range(3))
@@ -680,7 +694,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             env.env_cfg.pitch_rate_max,
         )
         target = self._continuous_pursuer_target(evader_next, regime)
-        pursuer_speed_ratio = 1.35 if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else self.continuous_pursuer_speed_ratio
+        pursuer_speed_ratio = 1.45 if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else self.continuous_pursuer_speed_ratio
         pu_accel, pu_yaw_rate, pu_pitch_rate = rule_based_pursuer_control(
             target,
             env.state.pursuer,

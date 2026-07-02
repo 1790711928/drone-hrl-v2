@@ -3,10 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import importlib.util
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
 import math
-=======
->>>>>>> main
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,7 +41,6 @@ SUMMARY_FIELDS = (
     "showcase_seed",
     "completed_phases",
     "lowlevel_steps",
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
     "avg_pursuer_evader_distance",
     "max_pursuer_evader_distance",
     "tail_avg_pursuer_evader_distance",
@@ -57,8 +53,6 @@ SUMMARY_FIELDS = (
     "selection_score",
     "selected_rank",
     "selected_flag",
-=======
->>>>>>> main
 )
 
 
@@ -275,20 +269,14 @@ class EpisodePlotData:
     boundary_priority_points: list[int]
     lowlevel_steps: int
     showcase_seed: int | str = ""
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
     selection_metrics: dict[str, float] = field(default_factory=dict)
     selected_rank: int | str = ""
     selected_flag: bool = False
-=======
->>>>>>> main
 
     def summary_row(self) -> dict[str, Any]:
         option_sequence = "->".join(OPTION_NAMES[index] for index in self.option_sequence)
         actual_regime_sequence = "->".join(compressed_name_sequence([name for _, name in self.regime_starts]))
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
         metrics = showcase_selection_metrics(self)
-=======
->>>>>>> main
         return {
             "scenario": self.scenario,
             "mode": self.mode,
@@ -303,7 +291,6 @@ class EpisodePlotData:
             "showcase_seed": self.showcase_seed,
             "completed_phases": self.completed_phases,
             "lowlevel_steps": self.lowlevel_steps,
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
             "avg_pursuer_evader_distance": f"{metrics['avg_pursuer_evader_distance']:.3f}",
             "max_pursuer_evader_distance": f"{metrics['max_pursuer_evader_distance']:.3f}",
             "tail_avg_pursuer_evader_distance": f"{metrics['tail_avg_pursuer_evader_distance']:.3f}",
@@ -409,11 +396,6 @@ def showcase_selection_metrics(episode: EpisodePlotData) -> dict[str, float]:
     return episode.selection_metrics
 
 
-=======
-        }
-
-
->>>>>>> main
 def rollout_episode(
     env: HighLevelOptionEnv,
     recorder: TrajectoryRecorder,
@@ -544,7 +526,6 @@ def select_episodes_for_plot(
             break
     return selected
 
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
 
 def select_best_showcase_episodes(episodes: list[EpisodePlotData], *, max_plots: int) -> list[EpisodePlotData]:
     for episode in episodes:
@@ -576,8 +557,6 @@ def print_showcase_score_table(episodes: list[EpisodePlotData], *, limit: int = 
         )
 
 
-=======
->>>>>>> main
 def _plot_segment(
     ax,
     points: list[tuple[float, float, float]],
@@ -883,12 +862,9 @@ def main() -> None:
     parser.add_argument("--min-lowlevel-steps", type=int, default=0)
     parser.add_argument("--min-unique-options", type=int, default=1)
     parser.add_argument("--max-rollout-attempts", type=int, default=0)
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
     parser.add_argument("--select-best", action="store_true")
     parser.add_argument("--best-of-attempts", type=int, default=100)
     parser.add_argument("--selection-metric", choices=["showcase_score"], default="showcase_score")
-=======
->>>>>>> main
     args = parser.parse_args()
     if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
@@ -905,13 +881,10 @@ def main() -> None:
         parser.error("episode filter thresholds must be non-negative and --min-unique-options must be >= 1")
     if args.pursuit_link_interval <= 0:
         parser.error("--pursuit-link-interval must be positive")
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
     if args.best_of_attempts <= 0:
         parser.error("--best-of-attempts must be positive")
     if args.select_best and (args.mode != "scripted_showcase" or args.scenario_set != SCRIPTED_SHOWCASE_SCENARIO):
         parser.error("--select-best is only supported with --mode scripted_showcase --scenario-set scripted_showcase")
-=======
->>>>>>> main
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
     if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
@@ -957,11 +930,7 @@ def main() -> None:
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
     max_attempts = args.best_of_attempts if args.select_best else (args.max_rollout_attempts or max(args.episodes, args.max_plots * 20))
-=======
-    max_attempts = args.max_rollout_attempts or max(args.episodes, args.max_plots * 20)
->>>>>>> main
     episodes: list[EpisodePlotData] = []
     selected: list[EpisodePlotData] = []
     for episode_id in range(1, max_attempts + 1):
@@ -976,11 +945,8 @@ def main() -> None:
             scenario_name=args.scenario_name,
         )
         episodes.append(episode)
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
         if args.select_best:
             continue
-=======
->>>>>>> main
         selected = select_episodes_for_plot(
             episodes,
             max_plots=args.max_plots,
@@ -999,12 +965,9 @@ def main() -> None:
             (args.min_switch_count, args.min_lowlevel_steps, args.min_unique_options > 1)
         ):
             break
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
     if args.select_best:
         selected = select_best_showcase_episodes(episodes, max_plots=args.max_plots)
         print_showcase_score_table(episodes, limit=10)
-=======
->>>>>>> main
     if not selected:
         print(
             "No episodes matched plot filters: "
@@ -1041,13 +1004,9 @@ def main() -> None:
         print(
             f"Saved plot: {saved_path} | lowlevel_steps={episode.lowlevel_steps} | "
             f"switch_count={episode.switch_count} | unique_strategies={len(set(episode.option_sequence))} | "
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
             f"outcome={episode.outcome} | seed={episode.showcase_seed} | "
             f"selection_score={showcase_selection_metrics(episode)['selection_score']:.3f} | "
             f"option_sequence={option_sequence}"
-=======
-            f"outcome={episode.outcome} | seed={episode.showcase_seed} | option_sequence={option_sequence}"
->>>>>>> main
         )
 
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -1055,11 +1014,7 @@ def main() -> None:
     with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=SUMMARY_FIELDS)
         writer.writeheader()
-<<<<<<< codex/clean-up-unused-flank_encirclement-references-thjlln
         writer.writerows(episode.summary_row() for episode in (episodes if args.select_best else selected))
-=======
-        writer.writerows(episode.summary_row() for episode in selected)
->>>>>>> main
     print(f"Saved summary CSV: {csv_path}")
     if not selected:
         print("No episodes matched the requested success/failure filter; summary CSV contains headers only.")

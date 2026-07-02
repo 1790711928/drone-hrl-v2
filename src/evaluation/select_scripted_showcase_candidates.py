@@ -33,6 +33,7 @@ SUMMARY_FIELDS = (
     "option_sequence",
     "actual_regime_sequence",
     "showcase_script",
+    "seed",
     "showcase_seed",
     "avg_pursuer_evader_distance",
     "max_pursuer_evader_distance",
@@ -46,6 +47,8 @@ SUMMARY_FIELDS = (
     "selection_score",
     "selected_rank",
     "selected_flag",
+    "plot_3d_path",
+    "plot_top_path",
 )
 
 
@@ -150,6 +153,7 @@ def score_episode(episode: EpisodePlotData) -> dict[str, Any]:
         "option_sequence": option_sequence,
         "actual_regime_sequence": actual_regime_sequence,
         "showcase_script": SCRIPTED_SHOWCASE_SCRIPT_NAME,
+        "seed": episode.showcase_seed,
         "showcase_seed": episode.showcase_seed,
         "avg_pursuer_evader_distance": avg_distance,
         "max_pursuer_evader_distance": max_distance,
@@ -163,6 +167,8 @@ def score_episode(episode: EpisodePlotData) -> dict[str, Any]:
         "selection_score": selection_score,
         "selected_rank": "",
         "selected_flag": 0,
+        "plot_3d_path": "",
+        "plot_top_path": "",
     }
 
 
@@ -213,6 +219,11 @@ def main() -> None:
     parser.add_argument("--showcase-z-bound-scale", type=float, default=6.0)
     parser.add_argument("--plot-sample-rate", type=int, default=5)
     parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
+    parser.add_argument(
+        "--save-top-view",
+        action="store_true",
+        help="Also save a top-view x-y plot for each selected scripted_showcase candidate.",
+    )
     args = parser.parse_args()
 
     if args.attempts <= 0:
@@ -275,18 +286,47 @@ def main() -> None:
         row["selected_flag"] = 1
 
     out_dir = Path(args.out_dir)
-    plots_dir = out_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
+    if args.save_top_view:
+        plots_3d_dir = out_dir / "plots_3d"
+        plots_top_dir = out_dir / "plots_top"
+    else:
+        plots_3d_dir = out_dir / "plots"
+        plots_top_dir = out_dir / "plots"
+
     for row, episode in selected_pairs:
-        saved_path = save_plot(
-            episode,
-            plots_dir,
-            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-            plot_sample_rate=args.plot_sample_rate,
-            view=args.view,
-        )
+        if args.save_top_view:
+            saved_3d_path = save_plot(
+                episode,
+                plots_3d_dir,
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                plot_sample_rate=args.plot_sample_rate,
+                view="3d",
+            )
+            saved_top_path = save_plot(
+                episode,
+                plots_top_dir,
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                plot_sample_rate=args.plot_sample_rate,
+                view="topdown",
+            )
+            row["plot_3d_path"] = str(saved_3d_path)
+            row["plot_top_path"] = str(saved_top_path)
+            saved_path_text = f"3d={saved_3d_path} | top={saved_top_path}"
+        else:
+            saved_path = save_plot(
+                episode,
+                plots_3d_dir,
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                plot_sample_rate=args.plot_sample_rate,
+                view=args.view,
+            )
+            if args.view == "topdown":
+                row["plot_top_path"] = str(saved_path)
+            else:
+                row["plot_3d_path"] = str(saved_path)
+            saved_path_text = str(saved_path)
         print(
-            f"Saved selected plot rank={row['selected_rank']}: {saved_path} | "
+            f"Saved selected plot rank={row['selected_rank']}: {saved_path_text} | "
             f"score={row['selection_score']:.3f} | lowlevel_steps={row['lowlevel_steps']} | "
             f"switch_count={row['switch_count']} | unique_strategies={row['unique_strategies']} | "
             f"outcome={row['outcome']} | seed={row['showcase_seed']}"

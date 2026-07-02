@@ -1,3 +1,5 @@
+"""Plot high-level option trajectories from a conflict-marker-free clean file."""
+
 from __future__ import annotations
 
 import argparse

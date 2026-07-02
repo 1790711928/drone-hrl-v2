@@ -208,7 +208,9 @@ def main() -> None:
     parser.add_argument("--episode-lowlevel-steps", type=int, default=500)
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
     parser.add_argument("--out-dir", default="outputs/evaluation/scripted_showcase_selection")
-    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.35)
+    parser.add_argument("--showcase-bound-scale", type=float, default=6.0)
+    parser.add_argument("--showcase-z-bound-scale", type=float, default=6.0)
     parser.add_argument("--plot-sample-rate", type=int, default=5)
     parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
     args = parser.parse_args()
@@ -243,6 +245,8 @@ def main() -> None:
         scenario_set=SCRIPTED_SHOWCASE_SCENARIO,
         episode_lowlevel_steps=args.episode_lowlevel_steps,
         pursuer_speed_ratio=args.pursuer_speed_ratio,
+        showcase_bound_scale=args.showcase_bound_scale,
+        showcase_z_bound_scale=args.showcase_z_bound_scale,
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()

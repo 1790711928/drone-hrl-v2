@@ -1,9 +1,10 @@
+"""Plot high-level option trajectories from a conflict-marker-free clean file."""
+
 from __future__ import annotations
 
 import argparse
 import csv
 import importlib.util
-import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,18 +42,6 @@ SUMMARY_FIELDS = (
     "showcase_seed",
     "completed_phases",
     "lowlevel_steps",
-    "avg_pursuer_evader_distance",
-    "max_pursuer_evader_distance",
-    "tail_avg_pursuer_evader_distance",
-    "x_range",
-    "y_range",
-    "z_range",
-    "axis_balance_score",
-    "min_strategy_segment_length",
-    "mean_strategy_segment_length",
-    "selection_score",
-    "selected_rank",
-    "selected_flag",
 )
 
 
@@ -269,14 +258,10 @@ class EpisodePlotData:
     boundary_priority_points: list[int]
     lowlevel_steps: int
     showcase_seed: int | str = ""
-    selection_metrics: dict[str, float] = field(default_factory=dict)
-    selected_rank: int | str = ""
-    selected_flag: bool = False
 
     def summary_row(self) -> dict[str, Any]:
         option_sequence = "->".join(OPTION_NAMES[index] for index in self.option_sequence)
         actual_regime_sequence = "->".join(compressed_name_sequence([name for _, name in self.regime_starts]))
-        metrics = showcase_selection_metrics(self)
         return {
             "scenario": self.scenario,
             "mode": self.mode,
@@ -291,109 +276,7 @@ class EpisodePlotData:
             "showcase_seed": self.showcase_seed,
             "completed_phases": self.completed_phases,
             "lowlevel_steps": self.lowlevel_steps,
-            "avg_pursuer_evader_distance": f"{metrics['avg_pursuer_evader_distance']:.3f}",
-            "max_pursuer_evader_distance": f"{metrics['max_pursuer_evader_distance']:.3f}",
-            "tail_avg_pursuer_evader_distance": f"{metrics['tail_avg_pursuer_evader_distance']:.3f}",
-            "x_range": f"{metrics['x_range']:.3f}",
-            "y_range": f"{metrics['y_range']:.3f}",
-            "z_range": f"{metrics['z_range']:.3f}",
-            "axis_balance_score": f"{metrics['axis_balance_score']:.3f}",
-            "min_strategy_segment_length": f"{metrics['min_strategy_segment_length']:.3f}",
-            "mean_strategy_segment_length": f"{metrics['mean_strategy_segment_length']:.3f}",
-            "selection_score": f"{metrics['selection_score']:.3f}",
-            "selected_rank": self.selected_rank,
-            "selected_flag": int(self.selected_flag),
         }
-
-
-def _distance(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
-    return math.sqrt(sum((left[index] - right[index]) ** 2 for index in range(3)))
-
-
-def _axis_ranges(points: list[tuple[float, float, float]]) -> tuple[float, float, float]:
-    if not points:
-        return 0.0, 0.0, 0.0
-    xs, ys, zs = zip(*points)
-    return max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)
-
-
-def _axis_balance_score(x_range: float, y_range: float, z_range: float) -> float:
-    ranges = [value for value in (x_range, y_range, z_range) if value > 1e-6]
-    if len(ranges) < 2:
-        return 0.0
-    return max(0.0, min(1.0, min(ranges) / max(ranges)))
-
-
-def _strategy_segment_lengths(episode: EpisodePlotData) -> list[float]:
-    lengths: list[float] = []
-    for start, end, _ in option_trajectory_segments(episode.option_switches, len(episode.evader_points)):
-        lengths.append(float(max(0, end - start)))
-    return lengths or [0.0]
-
-
-def showcase_selection_metrics(episode: EpisodePlotData) -> dict[str, float]:
-    if episode.selection_metrics:
-        return episode.selection_metrics
-
-    pair_count = min(len(episode.evader_points), len(episode.pursuer_points))
-    distances = [
-        _distance(episode.evader_points[index], episode.pursuer_points[index])
-        for index in range(pair_count)
-    ]
-    avg_distance = sum(distances) / len(distances) if distances else 0.0
-    max_distance = max(distances) if distances else 0.0
-    tail_start = int(0.8 * len(distances)) if distances else 0
-    tail = distances[tail_start:] or distances
-    tail_avg_distance = sum(tail) / len(tail) if tail else 0.0
-
-    x_range, y_range, z_range = _axis_ranges(episode.evader_points)
-    axis_balance = _axis_balance_score(x_range, y_range, z_range)
-    segment_lengths = _strategy_segment_lengths(episode)
-    min_segment_length = min(segment_lengths) if segment_lengths else 0.0
-    mean_segment_length = sum(segment_lengths) / len(segment_lengths) if segment_lengths else 0.0
-
-    unique_strategies = len(set(episode.option_sequence))
-    steps_score = min(float(episode.lowlevel_steps), 400.0) * 0.25
-    strategy_score = 40.0 * unique_strategies + 8.0 * min(float(episode.switch_count), 6.0)
-    outcome_score = {
-        "escaped": 25.0,
-        "timeout": 10.0,
-        "out_of_bounds": -20.0,
-        "captured": -30.0,
-    }.get(episode.outcome, 0.0)
-    distance_score = -0.35 * avg_distance - 0.25 * tail_avg_distance - 0.10 * max_distance
-    axis_score = 25.0 * axis_balance
-    segment_score = 0.20 * mean_segment_length + 0.30 * min_segment_length
-    penalties = 0.0
-    if unique_strategies < 4:
-        penalties += 80.0
-    if episode.switch_count < 3:
-        penalties += 40.0
-    penalties += max(0.0, tail_avg_distance - 55.0) * 1.5
-    penalties += max(0.0, max_distance - 90.0) * 1.0
-
-    selection_score = (
-        steps_score
-        + strategy_score
-        + outcome_score
-        + distance_score
-        + axis_score
-        + segment_score
-        - penalties
-    )
-    episode.selection_metrics = {
-        "avg_pursuer_evader_distance": avg_distance,
-        "max_pursuer_evader_distance": max_distance,
-        "tail_avg_pursuer_evader_distance": tail_avg_distance,
-        "x_range": x_range,
-        "y_range": y_range,
-        "z_range": z_range,
-        "axis_balance_score": axis_balance,
-        "min_strategy_segment_length": min_segment_length,
-        "mean_strategy_segment_length": mean_segment_length,
-        "selection_score": selection_score,
-    }
-    return episode.selection_metrics
 
 
 def rollout_episode(
@@ -525,37 +408,6 @@ def select_episodes_for_plot(
         if len(selected) >= max_plots:
             break
     return selected
-
-
-def select_best_showcase_episodes(episodes: list[EpisodePlotData], *, max_plots: int) -> list[EpisodePlotData]:
-    for episode in episodes:
-        showcase_selection_metrics(episode)
-        episode.selected_rank = ""
-        episode.selected_flag = False
-    ranked = sorted(episodes, key=lambda item: showcase_selection_metrics(item)["selection_score"], reverse=True)
-    selected = ranked[:max_plots]
-    for rank, episode in enumerate(selected, start=1):
-        episode.selected_rank = rank
-        episode.selected_flag = True
-    return selected
-
-
-def print_showcase_score_table(episodes: list[EpisodePlotData], *, limit: int = 10) -> None:
-    ranked = sorted(episodes, key=lambda item: showcase_selection_metrics(item)["selection_score"], reverse=True)
-    print("=== Top scripted_showcase rollouts by showcase_score ===")
-    print(
-        "rank, selection_score, lowlevel_steps, switch_count, unique_strategies, "
-        "outcome, avg_distance, tail_avg_distance, showcase_seed"
-    )
-    for rank, episode in enumerate(ranked[:limit], start=1):
-        metrics = showcase_selection_metrics(episode)
-        print(
-            f"{rank}, {metrics['selection_score']:.3f}, {episode.lowlevel_steps}, {episode.switch_count}, "
-            f"{len(set(episode.option_sequence))}, {episode.outcome}, "
-            f"{metrics['avg_pursuer_evader_distance']:.3f}, "
-            f"{metrics['tail_avg_pursuer_evader_distance']:.3f}, {episode.showcase_seed}"
-        )
-
 
 def _plot_segment(
     ax,
@@ -862,9 +714,6 @@ def main() -> None:
     parser.add_argument("--min-lowlevel-steps", type=int, default=0)
     parser.add_argument("--min-unique-options", type=int, default=1)
     parser.add_argument("--max-rollout-attempts", type=int, default=0)
-    parser.add_argument("--select-best", action="store_true")
-    parser.add_argument("--best-of-attempts", type=int, default=100)
-    parser.add_argument("--selection-metric", choices=["showcase_score"], default="showcase_score")
     args = parser.parse_args()
     if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
@@ -881,10 +730,6 @@ def main() -> None:
         parser.error("episode filter thresholds must be non-negative and --min-unique-options must be >= 1")
     if args.pursuit_link_interval <= 0:
         parser.error("--pursuit-link-interval must be positive")
-    if args.best_of_attempts <= 0:
-        parser.error("--best-of-attempts must be positive")
-    if args.select_best and (args.mode != "scripted_showcase" or args.scenario_set != SCRIPTED_SHOWCASE_SCENARIO):
-        parser.error("--select-best is only supported with --mode scripted_showcase --scenario-set scripted_showcase")
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
     if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
@@ -930,7 +775,7 @@ def main() -> None:
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()
-    max_attempts = args.best_of_attempts if args.select_best else (args.max_rollout_attempts or max(args.episodes, args.max_plots * 20))
+    max_attempts = args.max_rollout_attempts or max(args.episodes, args.max_plots * 20)
     episodes: list[EpisodePlotData] = []
     selected: list[EpisodePlotData] = []
     for episode_id in range(1, max_attempts + 1):
@@ -945,8 +790,6 @@ def main() -> None:
             scenario_name=args.scenario_name,
         )
         episodes.append(episode)
-        if args.select_best:
-            continue
         selected = select_episodes_for_plot(
             episodes,
             max_plots=args.max_plots,
@@ -965,9 +808,6 @@ def main() -> None:
             (args.min_switch_count, args.min_lowlevel_steps, args.min_unique_options > 1)
         ):
             break
-    if args.select_best:
-        selected = select_best_showcase_episodes(episodes, max_plots=args.max_plots)
-        print_showcase_score_table(episodes, limit=10)
     if not selected:
         print(
             "No episodes matched plot filters: "
@@ -1004,9 +844,7 @@ def main() -> None:
         print(
             f"Saved plot: {saved_path} | lowlevel_steps={episode.lowlevel_steps} | "
             f"switch_count={episode.switch_count} | unique_strategies={len(set(episode.option_sequence))} | "
-            f"outcome={episode.outcome} | seed={episode.showcase_seed} | "
-            f"selection_score={showcase_selection_metrics(episode)['selection_score']:.3f} | "
-            f"option_sequence={option_sequence}"
+            f"outcome={episode.outcome} | seed={episode.showcase_seed} | option_sequence={option_sequence}"
         )
 
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -1014,7 +852,7 @@ def main() -> None:
     with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=SUMMARY_FIELDS)
         writer.writeheader()
-        writer.writerows(episode.summary_row() for episode in (episodes if args.select_best else selected))
+        writer.writerows(episode.summary_row() for episode in selected)
     print(f"Saved summary CSV: {csv_path}")
     if not selected:
         print("No episodes matched the requested success/failure filter; summary CSV contains headers only.")

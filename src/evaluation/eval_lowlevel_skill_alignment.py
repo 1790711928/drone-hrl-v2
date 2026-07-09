@@ -415,11 +415,33 @@ def write_summary(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def resolve_model_paths(args: argparse.Namespace) -> list[Path]:
+    if args.policy_checkpoints is not None:
+        return [Path(value) for value in args.policy_checkpoints]
+    return [
+        Path(args.policy1_checkpoint) if args.policy1_checkpoint else Path(args.checkpoint_dir) / MODEL_FILENAMES[0],
+        Path(args.policy2_checkpoint) if args.policy2_checkpoint else Path(args.checkpoint_dir) / MODEL_FILENAMES[1],
+        Path(args.policy3_checkpoint) if args.policy3_checkpoint else Path(args.checkpoint_dir) / MODEL_FILENAMES[2],
+        Path(args.policy4_checkpoint) if args.policy4_checkpoint else Path(args.checkpoint_dir) / MODEL_FILENAMES[3],
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Soft low-level skill-alignment diagnostics")
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
+    parser.add_argument(
+        "--policy-checkpoints",
+        nargs=4,
+        default=None,
+        metavar=("PI1", "PI2", "PI3", "PI4"),
+        help="Optional explicit checkpoint paths for pi1 pi2 pi3 pi4, in order.",
+    )
+    parser.add_argument("--policy1-checkpoint", default="", help="Optional explicit pi1 checkpoint path.")
+    parser.add_argument("--policy2-checkpoint", default="", help="Optional explicit pi2 checkpoint path.")
+    parser.add_argument("--policy3-checkpoint", default="", help="Optional explicit pi3 checkpoint path.")
+    parser.add_argument("--policy4-checkpoint", default="", help="Optional explicit pi4 checkpoint path.")
     parser.add_argument("--out-dir", default="outputs/paper_eval_core/lowlevel_skill_alignment")
     parser.add_argument("--pass-threshold", type=float, default=0.60)
     args = parser.parse_args()
@@ -429,8 +451,7 @@ def main() -> None:
     if not 0.0 <= args.pass_threshold <= 1.0:
         parser.error("--pass-threshold must be in [0, 1]")
 
-    checkpoint_dir = Path(args.checkpoint_dir)
-    model_paths = [checkpoint_dir / filename for filename in MODEL_FILENAMES]
+    model_paths = resolve_model_paths(args)
     for path in model_paths:
         if not path.exists():
             print(f"Missing checkpoint: {path}")

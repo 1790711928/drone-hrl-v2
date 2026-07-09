@@ -53,6 +53,7 @@ class RolloutSkillAlignment:
     flank_score: float = 0.0
     boundary_score: float = 0.0
     vertical_score: float = 0.0
+    components: dict[str, float] = field(default_factory=dict)
 
     @property
     def skill_alignment_score(self) -> float:
@@ -143,16 +144,19 @@ def compute_skill_scores(rollout: RolloutSkillAlignment) -> None:
     direction_consistency = clip01(0.5 + safe_mean(late(threat_forward)) - safe_mean(early(threat_forward)))
     dx_drift = abs(obs[-1]["dy"] - obs[0]["dy"]) + abs(obs[-1]["dz"] - obs[0]["dz"])
     drift_penalty = clip01(dx_drift * 0.6)
+    rear_safety = 0.5 * no_capture + 0.5 * no_oob
 
     threat_right_abs = [abs(entry["threat_right"]) for entry in obs]
     threat_right_reduction = clip01(0.5 + safe_mean(early(threat_right_abs)) - safe_mean(late(threat_right_abs)))
     lateral_evasion = clip01(abs(obs[-1]["dy"] - obs[0]["dy"]) * 2.0)
+    flank_safety = 0.5 * no_capture + 0.5 * no_oob
 
     margins = [entry["min_boundary_margin"] for entry in obs]
     margin_improvement = clip01(0.5 + safe_mean(late(margins)) - safe_mean(early(margins)))
     final_margin = clip01(safe_mean(late(margins)))
     margin_variation = max(margins) - min(margins) if margins else 0.0
     recovery_stability = clip01(final_margin - 0.25 * margin_variation + 0.25)
+    boundary_safety = no_oob
 
     z_sep = [abs(entry["dz"]) for entry in obs]
     vertical_sep_improvement = clip01(0.5 + (safe_mean(late(z_sep)) - safe_mean(early(z_sep))) * 2.5)
@@ -160,12 +164,31 @@ def compute_skill_scores(rollout: RolloutSkillAlignment) -> None:
     threat_up_reduction = clip01(0.5 + safe_mean(early(threat_up_abs)) - safe_mean(late(threat_up_abs)))
     z_boundary_safety = clip01(safe_mean([entry["boundary_margin_z"] for entry in obs]))
     horizontal_escape_penalty = clip01((abs(obs[-1]["dx"] - obs[0]["dx"]) + abs(obs[-1]["dy"] - obs[0]["dy"])) * 0.35)
+    vertical_safety = 0.5 * no_capture + 0.5 * no_oob
+
+    rollout.components = {
+        "rear_distance_gain_component": distance_gain,
+        "rear_closing_speed_component": closing_reduction,
+        "rear_safety_component": rear_safety,
+        "rear_direction_consistency_component": direction_consistency,
+        "flank_threat_right_component": threat_right_reduction,
+        "flank_lateral_component": lateral_evasion,
+        "flank_distance_component": distance_maintenance,
+        "flank_safety_component": flank_safety,
+        "boundary_margin_improvement_component": margin_improvement,
+        "boundary_final_margin_component": final_margin,
+        "boundary_safety_component": boundary_safety,
+        "vertical_separation_component": vertical_sep_improvement,
+        "vertical_threat_up_component": threat_up_reduction,
+        "vertical_z_safety_component": z_boundary_safety,
+        "vertical_distance_component": distance_maintenance,
+    }
 
     # Soft scores: capture/out-of-bounds affect safety terms, but only those outcomes are hard safety failures.
     rollout.rear_score = clip01(
         0.26 * distance_gain
         + 0.23 * closing_reduction
-        + 0.20 * (0.5 * no_capture + 0.5 * no_oob)
+        + 0.20 * rear_safety
         + 0.18 * direction_consistency
         + 0.13 * (1.0 - 0.45 * drift_penalty)
     )
@@ -173,13 +196,13 @@ def compute_skill_scores(rollout: RolloutSkillAlignment) -> None:
         0.30 * threat_right_reduction
         + 0.25 * lateral_evasion
         + 0.20 * distance_maintenance
-        + 0.15 * (0.5 * no_capture + 0.5 * no_oob)
+        + 0.15 * flank_safety
         + 0.10 * outcome_bonus
     )
     rollout.boundary_score = clip01(
         0.30 * margin_improvement
         + 0.25 * final_margin
-        + 0.20 * no_oob
+        + 0.20 * boundary_safety
         + 0.15 * recovery_stability
         + 0.10 * outcome_bonus
     )
@@ -188,7 +211,7 @@ def compute_skill_scores(rollout: RolloutSkillAlignment) -> None:
         + 0.24 * threat_up_reduction
         + 0.20 * z_boundary_safety
         + 0.16 * distance_maintenance
-        + 0.12 * (0.5 * no_capture + 0.5 * no_oob)
+        + 0.12 * vertical_safety
         - 0.12 * horizontal_escape_penalty
     )
 

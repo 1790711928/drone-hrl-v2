@@ -1,0 +1,2 @@
+asset_role,source_path,frozen_path,status,notes
+inventory,outputs/evaluation/scripted_showcase_selection,,missing,"No scripted_showcase_selection output files were present in this workspace; no plots or summary CSV were copied."

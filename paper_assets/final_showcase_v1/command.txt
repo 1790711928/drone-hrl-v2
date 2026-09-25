@@ -1,0 +1,2 @@
+# Command used/intended for scripted_showcase candidate generation
+python -m src.evaluation.select_scripted_showcase_candidates --attempts 120 --max-plots 3 --episode-lowlevel-steps 500 --pursuer-speed-ratio 1.35 --showcase-bound-scale 6.0 --showcase-z-bound-scale 6.0 --save-top-view

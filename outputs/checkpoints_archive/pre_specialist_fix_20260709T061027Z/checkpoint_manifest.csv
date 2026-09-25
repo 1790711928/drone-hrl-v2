@@ -1,0 +1,5 @@
+source_path,archive_path,status,notes
+outputs/checkpoints/sac_low_1_rear_close_threat.zip,,missing,Checkpoint was not present in this workspace; copy locally before specialist fine-tune.
+outputs/checkpoints/sac_low_2_flank_threat.zip,,missing,Checkpoint was not present in this workspace; copy locally before specialist fine-tune.
+outputs/checkpoints/sac_low_3_boundary_constrained.zip,,missing,Checkpoint was not present in this workspace; copy locally before specialist fine-tune.
+outputs/checkpoints/sac_low_4_vertical_z_threat.zip,,missing,Checkpoint was not present in this workspace; copy locally before specialist fine-tune.

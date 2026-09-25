@@ -51,8 +51,6 @@ def main() -> None:
     Path(args.model_out).parent.mkdir(parents=True, exist_ok=True)
 
     primary = args.scenario
-    if primary == "flank_encirclement":
-        primary = "flank_threat"
 
     mix_ratio = min(max(args.mix_ratio, 0.0), 0.9)
     if primary not in SCENARIOS:

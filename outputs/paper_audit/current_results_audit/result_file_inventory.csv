@@ -1,0 +1,4 @@
+file_path,file_name,file_type,modified_time,row_count,columns,likely_result_type
+paper_assets/final_showcase_v1/README.md,README.md,md,2026-07-09T03:05:27.170673+00:00,,,scripted_showcase_asset_or_summary
+paper_assets/final_showcase_v1/command.txt,command.txt,txt,2026-07-09T03:05:27.170673+00:00,,,scripted_showcase_asset_or_summary
+paper_assets/final_showcase_v1/file_manifest.csv,file_manifest.csv,csv,2026-07-09T03:05:27.170673+00:00,1,asset_role|source_path|frozen_path|status|notes,scripted_showcase_asset_or_summary

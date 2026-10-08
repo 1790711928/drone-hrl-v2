@@ -65,9 +65,20 @@ DIAGNOSTIC_METRICS = [
     "threat_forward_early_mean",
     "threat_forward_late_mean",
     "threat_forward_improvement",
+    "rear_gap_early_mean",
+    "rear_gap_late_mean",
+    "rear_gap_gain",
+    "rear_gap_non_decreasing_ratio",
+    "side_gap_early_mean",
+    "side_gap_late_mean",
+    "side_gap_gain",
+    "side_gap_non_decreasing_ratio",
     "threat_up_early_mean",
     "threat_up_late_mean",
     "threat_up_improvement",
+    "vertical_threat_early_mean",
+    "vertical_threat_late_mean",
+    "vertical_threat_reduction",
     "final_evader_z",
     "final_pursuer_z",
 ]
@@ -88,8 +99,18 @@ SHEET_MATRIX_METRICS = {
         "threat_forward_early_mean",
         "threat_forward_late_mean",
         "threat_forward_improvement",
+        "rear_gap_early_mean",
+        "rear_gap_late_mean",
+        "rear_gap_gain",
+        "rear_gap_non_decreasing_ratio",
     ],
-    "Flank": ["lateral_threat_reduction"],
+    "Flank": [
+        "lateral_threat_reduction",
+        "side_gap_early_mean",
+        "side_gap_late_mean",
+        "side_gap_gain",
+        "side_gap_non_decreasing_ratio",
+    ],
     "Boundary": ["boundary_margin_gain", "safe_boundary_ratio"],
     "Vertical": [
         "vertical_separation_gain",
@@ -97,6 +118,9 @@ SHEET_MATRIX_METRICS = {
         "threat_up_early_mean",
         "threat_up_late_mean",
         "threat_up_improvement",
+        "vertical_threat_early_mean",
+        "vertical_threat_late_mean",
+        "vertical_threat_reduction",
     ],
 }
 
@@ -132,6 +156,71 @@ def trace_change(values: Sequence[float]) -> dict[str, float]:
     early = mean_or_zero(early_window(values))
     late = mean_or_zero(late_window(values))
     return {"early_mean": early, "late_mean": late, "improvement": late - early}
+
+
+def initial_reference_axes(initial_state: Env3DState) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Return the fixed initial evader forward and right axes.
+
+    The axes use the same body-frame convention as ``PursuitEscapeEnv``:
+    forward is the evader heading and right is ``(-sin(yaw), cos(yaw), 0)``.
+    They are computed once from the initial pose and never updated during an
+    episode.
+    """
+    evader = initial_state.evader
+    forward = (
+        math.cos(evader.pitch) * math.cos(evader.yaw),
+        math.cos(evader.pitch) * math.sin(evader.yaw),
+        math.sin(evader.pitch),
+    )
+    right = (-math.sin(evader.yaw), math.cos(evader.yaw), 0.0)
+    return forward, right
+
+
+def fixed_reference_gaps(
+    initial_state: Env3DState,
+    state_trace: Sequence[Env3DState],
+) -> tuple[list[float], list[float]]:
+    """Compute rear and signed-side gaps against one fixed initial frame."""
+    if not state_trace:
+        return [], []
+    forward, right = initial_reference_axes(initial_state)
+    initial_evader = initial_state.evader
+    initial_pursuer = initial_state.pursuer
+    initial_rx = initial_pursuer.x - initial_evader.x
+    initial_ry = initial_pursuer.y - initial_evader.y
+    initial_rz = initial_pursuer.z - initial_evader.z
+    initial_side_projection = initial_rx * right[0] + initial_ry * right[1] + initial_rz * right[2]
+    if abs(initial_side_projection) <= 1e-9:
+        sigma = 1.0
+    else:
+        sigma = 1.0 if initial_side_projection > 0.0 else -1.0
+
+    rear_gaps: list[float] = []
+    side_gaps: list[float] = []
+    for state in state_trace:
+        rx = state.pursuer.x - state.evader.x
+        ry = state.pursuer.y - state.evader.y
+        rz = state.pursuer.z - state.evader.z
+        forward_projection = rx * forward[0] + ry * forward[1] + rz * forward[2]
+        side_projection = rx * right[0] + ry * right[1] + rz * right[2]
+        rear_gaps.append(-forward_projection)
+        side_gaps.append(sigma * side_projection)
+    return rear_gaps, side_gaps
+
+
+def non_decreasing_ratio(values: Sequence[float]) -> float:
+    """Return the fraction of adjacent samples that do not decrease."""
+    if len(values) < 2:
+        return 0.0
+    return sum(current >= previous for previous, current in zip(values, values[1:])) / (len(values) - 1)
+
+
+def absolute_trace_reduction(values: Sequence[float]) -> dict[str, float]:
+    """Summarize absolute early/late threat magnitude and its reduction."""
+    magnitudes = [abs(value) for value in values]
+    early = mean_or_zero(early_window(magnitudes))
+    late = mean_or_zero(late_window(magnitudes))
+    return {"early_mean": early, "late_mean": late, "reduction": early - late}
 
 
 def non_closing_ratio(closing_speeds: Sequence[float]) -> float:
@@ -252,6 +341,7 @@ def run_paired_episode(
     env = _paired_env(scenario, initial_state)
     state = env.inner.state
     assert state is not None
+    state_trace = [copy.deepcopy(state)]
     obs_dict = _state_observation(env, 0.0)
     obs = env._flatten_obs(obs_dict)
 
@@ -275,6 +365,7 @@ def run_paired_episode(
         episode_length += 1
         state = env.inner.state
         assert state is not None
+        state_trace.append(copy.deepcopy(state))
         closing_speed = float(info.get("closing_speed", 0.0))
         obs_dict = _state_observation(env, closing_speed)
         distances.append(relative_distance(state))
@@ -299,6 +390,12 @@ def run_paired_episode(
     )
     forward_change = trace_change(threat_forward)
     up_change = trace_change(threat_up)
+    vertical_threat_change = absolute_trace_reduction(threat_up)
+    rear_gaps, side_gaps = fixed_reference_gaps(initial_state, state_trace)
+    rear_gap_early = mean_or_zero(early_window(rear_gaps))
+    rear_gap_late = mean_or_zero(late_window(rear_gaps))
+    side_gap_early = mean_or_zero(early_window(side_gaps))
+    side_gap_late = mean_or_zero(late_window(side_gaps))
     out_of_bounds_axis = detect_out_of_bounds_axis(state, env, outcome)
     initial_state_fields = {
         "initial_evader_x": initial_state.evader.x,
@@ -340,9 +437,20 @@ def run_paired_episode(
         "threat_forward_early_mean": forward_change["early_mean"],
         "threat_forward_late_mean": forward_change["late_mean"],
         "threat_forward_improvement": forward_change["improvement"],
+        "rear_gap_early_mean": rear_gap_early,
+        "rear_gap_late_mean": rear_gap_late,
+        "rear_gap_gain": rear_gap_late - rear_gap_early,
+        "rear_gap_non_decreasing_ratio": non_decreasing_ratio(rear_gaps),
+        "side_gap_early_mean": side_gap_early,
+        "side_gap_late_mean": side_gap_late,
+        "side_gap_gain": side_gap_late - side_gap_early,
+        "side_gap_non_decreasing_ratio": non_decreasing_ratio(side_gaps),
         "threat_up_early_mean": up_change["early_mean"],
         "threat_up_late_mean": up_change["late_mean"],
         "threat_up_improvement": up_change["improvement"],
+        "vertical_threat_early_mean": vertical_threat_change["early_mean"],
+        "vertical_threat_late_mean": vertical_threat_change["late_mean"],
+        "vertical_threat_reduction": vertical_threat_change["reduction"],
         **initial_state_fields,
         **metrics,
     }
@@ -420,6 +528,15 @@ def _summary_table_rows(summary_rows: Sequence[dict[str, Any]]) -> list[list[Any
         SUMMARY_FIELDS,
         *[[row.get(field, "") for field in SUMMARY_FIELDS] for row in summary_rows],
     ]
+
+
+def write_summary_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    """Write the existing long-form summary CSV, including diagnostics."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SUMMARY_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _matrix_rows(summary_rows: Sequence[dict[str, Any]], metric: str) -> list[list[Any]]:
@@ -698,6 +815,7 @@ def main() -> None:
     out_dir = Path(args.output_dir)
     write_raw_csv(out_dir / "behavior_metrics_raw.csv", rows)
     summary_rows = summarize_rows(rows, metrics=REPORT_METRICS)
+    write_summary_csv(out_dir / "behavior_metrics_summary.csv", summary_rows)
     write_behavior_workbook(
         out_dir / "behavior_evaluation.xlsx",
         raw_rows=rows,
@@ -707,6 +825,7 @@ def main() -> None:
         vertical_safe_threshold=args.vertical_safe_threshold,
     )
     print(f"[csv] raw: {out_dir / 'behavior_metrics_raw.csv'}")
+    print(f"[csv] summary: {out_dir / 'behavior_metrics_summary.csv'}")
     print(f"[xlsx] report: {out_dir / 'behavior_evaluation.xlsx'}")
     if args.export_matrix_csv:
         write_mean_matrices(out_dir, summary_rows)

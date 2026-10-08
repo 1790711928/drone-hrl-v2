@@ -4,7 +4,10 @@ import zipfile
 import pytest
 
 from src.evaluation.eval_lowlevel_behavior_raw import (
+    absolute_trace_reduction,
     compute_raw_behavior_metrics,
+    fixed_reference_gaps,
+    non_decreasing_ratio,
     late_window,
     early_window,
     non_closing_ratio,
@@ -13,6 +16,14 @@ from src.evaluation.eval_lowlevel_behavior_raw import (
     trace_change,
     write_behavior_workbook,
 )
+from src.env.dynamics import Agent3DState, Env3DState
+
+
+def make_state(*, evader=(0.0, 0.0, 0.0), pursuer=(-5.0, 0.0, 0.0), yaw=0.0, pitch=0.0) -> Env3DState:
+    return Env3DState(
+        evader=Agent3DState(*evader, speed=10.0, yaw=yaw, pitch=pitch),
+        pursuer=Agent3DState(*pursuer, speed=10.0, yaw=0.0, pitch=0.0),
+    )
 
 
 def test_non_closing_ratio_uses_environment_sign_convention() -> None:
@@ -56,6 +67,43 @@ def test_diagnostic_trace_change_is_signed_late_minus_early() -> None:
     assert result["improvement"] == pytest.approx(2.5)
 
 
+def test_rear_gap_is_positive_behind_and_increases_with_fixed_initial_axis() -> None:
+    initial = make_state()
+    farther_behind = make_state(pursuer=(-7.0, 0.0, 0.0))
+    rear_gaps, _ = fixed_reference_gaps(initial, [initial, farther_behind])
+    assert rear_gaps == pytest.approx([5.0, 7.0])
+    assert non_decreasing_ratio(rear_gaps) == 1.0
+
+
+def test_rear_gap_ignores_later_evader_heading_changes() -> None:
+    initial = make_state()
+    changed_heading = make_state(yaw=1.1, pitch=0.4)
+    rear_gaps, _ = fixed_reference_gaps(initial, [initial, changed_heading])
+    assert rear_gaps == pytest.approx([5.0, 5.0])
+
+
+def test_side_gap_sigma_makes_left_and_right_threats_comparable() -> None:
+    right_initial = make_state(pursuer=(0.0, 5.0, 0.0))
+    left_initial = make_state(pursuer=(0.0, -5.0, 0.0))
+    _, right_gap = fixed_reference_gaps(right_initial, [right_initial])
+    _, left_gap = fixed_reference_gaps(left_initial, [left_initial])
+    assert right_gap == pytest.approx([5.0])
+    assert left_gap == pytest.approx([5.0])
+
+
+def test_side_gap_increases_away_from_initial_side_and_ignores_heading() -> None:
+    initial = make_state(pursuer=(0.0, 5.0, 0.0))
+    moved_away = make_state(evader=(0.0, -2.0, 0.0), pursuer=(0.0, 5.0, 0.0), yaw=1.2, pitch=-0.3)
+    _, side_gaps = fixed_reference_gaps(initial, [initial, moved_away])
+    assert side_gaps == pytest.approx([5.0, 7.0])
+
+
+def test_vertical_threat_reduction_is_mirror_symmetric() -> None:
+    positive = absolute_trace_reduction([0.8, 0.4, 0.2])
+    mirrored = absolute_trace_reduction([-0.8, -0.4, -0.2])
+    assert positive["reduction"] == pytest.approx(mirrored["reduction"])
+
+
 def test_paired_initial_state_is_reproducible() -> None:
     first = sample_paired_initial_state("rear_close_threat", 17)
     second = sample_paired_initial_state("rear_close_threat", 17)
@@ -83,6 +131,21 @@ def test_summary_reports_mean_std_median_min_max_and_outcome_rates() -> None:
     assert distance["max"] == 3.0
     assert distance["episode_count"] == 2
     assert distance["success_rate"] == 1.0
+
+
+def test_summary_can_include_new_diagnostic_metrics() -> None:
+    row = {
+        "scenario": "rear_close_threat",
+        "policy": "pi1",
+        "success": 1,
+        "captured": 0,
+        "out_of_bounds": 0,
+        "timeout": 0,
+        "rear_gap_gain": 2.5,
+    }
+    summary = summarize_rows([row], metrics=["rear_gap_gain"])
+    assert summary[0]["metric"] == "rear_gap_gain"
+    assert summary[0]["mean"] == 2.5
 
 
 def test_workbook_contains_required_sheets_and_manifest(tmp_path: Path) -> None:

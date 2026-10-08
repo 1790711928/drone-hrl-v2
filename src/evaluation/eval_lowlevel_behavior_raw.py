@@ -69,6 +69,12 @@ DIAGNOSTIC_METRICS = [
     "rear_gap_late_mean",
     "rear_gap_gain",
     "rear_gap_non_decreasing_ratio",
+    "rear_away_displacement_early_mean",
+    "rear_away_displacement_late_mean",
+    "rear_away_displacement_gain",
+    "evader_path_length",
+    "rear_away_net_displacement",
+    "rear_escape_efficiency",
     "side_gap_early_mean",
     "side_gap_late_mean",
     "side_gap_gain",
@@ -79,10 +85,25 @@ DIAGNOSTIC_METRICS = [
     "vertical_threat_early_mean",
     "vertical_threat_late_mean",
     "vertical_threat_reduction",
+    "vertical_away_displacement_early_mean",
+    "vertical_away_displacement_late_mean",
+    "vertical_away_displacement_gain",
+    "vertical_away_net_displacement",
     "final_evader_z",
     "final_pursuer_z",
 ]
 REPORT_METRICS = [*BEHAVIOR_METRICS, *DIAGNOSTIC_METRICS]
+VALID_METRIC_FIELDS = {
+    "rear_away_displacement_gain": "rear_away_displacement_gain_valid",
+    "rear_escape_efficiency": "rear_escape_efficiency_valid",
+    "side_gap_gain": "side_gap_gain_valid",
+    "side_gap_non_decreasing_ratio": "side_gap_non_decreasing_ratio_valid",
+    "boundary_margin_gain": "boundary_margin_gain_valid",
+    "safe_boundary_ratio": "safe_boundary_ratio_valid",
+    "vertical_away_displacement_gain": "vertical_away_displacement_gain_valid",
+    "distance_gain": "distance_gain_valid",
+}
+VALID_METRIC_FIELDS_BY_RAW = {field: raw for raw, field in VALID_METRIC_FIELDS.items()}
 MATRIX_FILENAMES = {
     "distance_gain": "distance_gain_matrix.csv",
     "non_closing_ratio": "non_closing_ratio_matrix.csv",
@@ -103,6 +124,14 @@ SHEET_MATRIX_METRICS = {
         "rear_gap_late_mean",
         "rear_gap_gain",
         "rear_gap_non_decreasing_ratio",
+        "rear_away_displacement_early_mean",
+        "rear_away_displacement_late_mean",
+        "rear_away_displacement_gain",
+        "evader_path_length",
+        "rear_away_net_displacement",
+        "rear_escape_efficiency",
+        "rear_away_displacement_gain_valid",
+        "rear_escape_efficiency_valid",
     ],
     "Flank": [
         "lateral_threat_reduction",
@@ -110,8 +139,15 @@ SHEET_MATRIX_METRICS = {
         "side_gap_late_mean",
         "side_gap_gain",
         "side_gap_non_decreasing_ratio",
+        "side_gap_gain_valid",
+        "side_gap_non_decreasing_ratio_valid",
     ],
-    "Boundary": ["boundary_margin_gain", "safe_boundary_ratio"],
+    "Boundary": [
+        "boundary_margin_gain",
+        "safe_boundary_ratio",
+        "boundary_margin_gain_valid",
+        "safe_boundary_ratio_valid",
+    ],
     "Vertical": [
         "vertical_separation_gain",
         "vertical_safe_ratio",
@@ -121,6 +157,12 @@ SHEET_MATRIX_METRICS = {
         "vertical_threat_early_mean",
         "vertical_threat_late_mean",
         "vertical_threat_reduction",
+        "vertical_away_displacement_early_mean",
+        "vertical_away_displacement_late_mean",
+        "vertical_away_displacement_gain",
+        "vertical_away_net_displacement",
+        "vertical_away_displacement_gain_valid",
+        "distance_gain_valid",
     ],
 }
 
@@ -208,6 +250,82 @@ def fixed_reference_gaps(
     return rear_gaps, side_gaps
 
 
+def initial_away_direction(initial_state: Env3DState) -> tuple[float, float, float]:
+    """Return the fixed unit vector from the initial pursuer to evader."""
+    evader = initial_state.evader
+    pursuer = initial_state.pursuer
+    dx = evader.x - pursuer.x
+    dy = evader.y - pursuer.y
+    dz = evader.z - pursuer.z
+    norm = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if norm <= 1e-9:
+        return (0.0, 0.0, 0.0)
+    return (dx / norm, dy / norm, dz / norm)
+
+
+def rear_away_displacement_trace(
+    initial_state: Env3DState,
+    state_trace: Sequence[Env3DState],
+) -> list[float]:
+    """Project evader displacement onto the fixed initial threat-away axis."""
+    axis = initial_away_direction(initial_state)
+    initial = initial_state.evader
+    return [
+        (state.evader.x - initial.x) * axis[0]
+        + (state.evader.y - initial.y) * axis[1]
+        + (state.evader.z - initial.z) * axis[2]
+        for state in state_trace
+    ]
+
+
+def evader_path_length(state_trace: Sequence[Env3DState]) -> float:
+    """Return the physical length of the evader trajectory."""
+    total = 0.0
+    for previous, current in zip(state_trace, state_trace[1:]):
+        dx = current.evader.x - previous.evader.x
+        dy = current.evader.y - previous.evader.y
+        dz = current.evader.z - previous.evader.z
+        total += math.sqrt(dx * dx + dy * dy + dz * dz)
+    return total
+
+
+def rear_escape_efficiency(
+    initial_state: Env3DState,
+    state_trace: Sequence[Env3DState],
+    eps: float = 1e-9,
+) -> tuple[float, float, float]:
+    """Return path length, net away displacement, and their ratio."""
+    away_trace = rear_away_displacement_trace(initial_state, state_trace)
+    path_length = evader_path_length(state_trace)
+    net_displacement = away_trace[-1] if away_trace else 0.0
+    return path_length, net_displacement, net_displacement / (path_length + eps)
+
+
+def vertical_away_displacement_trace(
+    initial_state: Env3DState,
+    state_trace: Sequence[Env3DState],
+) -> list[float]:
+    """Project evader z displacement away from the initial vertical threat."""
+    delta_z0 = initial_state.pursuer.z - initial_state.evader.z
+    if abs(delta_z0) <= 1e-9:
+        sigma_z = 1.0
+    else:
+        sigma_z = 1.0 if delta_z0 > 0.0 else -1.0
+    initial_z = initial_state.evader.z
+    return [-sigma_z * (state.evader.z - initial_z) for state in state_trace]
+
+
+def compute_task_valid(outcome: Any) -> int:
+    """Return the shared outer task gate: only escaped episodes are valid."""
+    value = getattr(outcome, "value", outcome)
+    return int(str(value) == "escaped")
+
+
+def gated_metric(task_valid: int, raw_metric: float) -> float:
+    """Apply task validity without deleting failed episodes or rescaling."""
+    return float(task_valid) * float(raw_metric)
+
+
 def non_decreasing_ratio(values: Sequence[float]) -> float:
     """Return the fraction of adjacent samples that do not decrease."""
     if len(values) < 2:
@@ -260,7 +378,7 @@ def compute_raw_behavior_metrics(
 
     early_right = early_window([abs(value) for value in threat_right])
     late_right = late_window([abs(value) for value in threat_right])
-    return {
+    row = {
         "distance_gain": float(distances[-1] - distances[0]),
         "non_closing_ratio": float(non_closing_ratio(closing_speeds)),
         "lateral_threat_reduction": float(mean_or_zero(early_right) - mean_or_zero(late_right)),
@@ -277,6 +395,7 @@ def compute_raw_behavior_metrics(
             / len(boundary_margin_z)
         ),
     }
+    return row
 
 
 def _state_observation(env: PursuitEscapeGymEnv, closing_speed: float) -> dict[str, float]:
@@ -392,11 +511,19 @@ def run_paired_episode(
     up_change = trace_change(threat_up)
     vertical_threat_change = absolute_trace_reduction(threat_up)
     rear_gaps, side_gaps = fixed_reference_gaps(initial_state, state_trace)
+    rear_away_trace = rear_away_displacement_trace(initial_state, state_trace)
+    path_length, rear_away_net, rear_efficiency = rear_escape_efficiency(initial_state, state_trace)
+    vertical_away_trace = vertical_away_displacement_trace(initial_state, state_trace)
     rear_gap_early = mean_or_zero(early_window(rear_gaps))
     rear_gap_late = mean_or_zero(late_window(rear_gaps))
     side_gap_early = mean_or_zero(early_window(side_gaps))
     side_gap_late = mean_or_zero(late_window(side_gaps))
+    rear_away_early = mean_or_zero(early_window(rear_away_trace))
+    rear_away_late = mean_or_zero(late_window(rear_away_trace))
+    vertical_away_early = mean_or_zero(early_window(vertical_away_trace))
+    vertical_away_late = mean_or_zero(late_window(vertical_away_trace))
     out_of_bounds_axis = detect_out_of_bounds_axis(state, env, outcome)
+    task_valid_value = compute_task_valid(outcome)
     initial_state_fields = {
         "initial_evader_x": initial_state.evader.x,
         "initial_evader_y": initial_state.evader.y,
@@ -416,7 +543,8 @@ def run_paired_episode(
         "policy": policy,
         "seed": seed,
         "trial_id": trial_id,
-        "success": int(outcome == "escaped"),
+        "success": task_valid_value,
+        "task_valid": task_valid_value,
         "captured": int(outcome == "captured"),
         "out_of_bounds": int(outcome == "out_of_bounds"),
         "timeout": int(outcome == "timeout"),
@@ -441,6 +569,12 @@ def run_paired_episode(
         "rear_gap_late_mean": rear_gap_late,
         "rear_gap_gain": rear_gap_late - rear_gap_early,
         "rear_gap_non_decreasing_ratio": non_decreasing_ratio(rear_gaps),
+        "rear_away_displacement_early_mean": rear_away_early,
+        "rear_away_displacement_late_mean": rear_away_late,
+        "rear_away_displacement_gain": rear_away_late - rear_away_early,
+        "evader_path_length": path_length,
+        "rear_away_net_displacement": rear_away_net,
+        "rear_escape_efficiency": rear_efficiency,
         "side_gap_early_mean": side_gap_early,
         "side_gap_late_mean": side_gap_late,
         "side_gap_gain": side_gap_late - side_gap_early,
@@ -451,9 +585,16 @@ def run_paired_episode(
         "vertical_threat_early_mean": vertical_threat_change["early_mean"],
         "vertical_threat_late_mean": vertical_threat_change["late_mean"],
         "vertical_threat_reduction": vertical_threat_change["reduction"],
+        "vertical_away_displacement_early_mean": vertical_away_early,
+        "vertical_away_displacement_late_mean": vertical_away_late,
+        "vertical_away_displacement_gain": vertical_away_late - vertical_away_early,
+        "vertical_away_net_displacement": vertical_away_trace[-1] if vertical_away_trace else 0.0,
         **initial_state_fields,
         **metrics,
     }
+    for raw_metric, valid_field in VALID_METRIC_FIELDS.items():
+        row[valid_field] = gated_metric(task_valid_value, row[raw_metric])
+    return row
 
 
 def resolve_model_paths(args: argparse.Namespace) -> list[Path]:
@@ -491,12 +632,19 @@ def summarize_rows(
             }
             for metric in metrics:
                 values = [float(row[metric]) for row in group]
+                valid_field = VALID_METRIC_FIELDS.get(metric)
+                valid_values = (
+                    [float(row[valid_field]) for row in group]
+                    if valid_field and all(valid_field in row for row in group)
+                    else []
+                )
                 summary.append(
                     {
                         "scenario": scenario,
                         "policy": policy,
                         "metric": metric,
                         "mean": statistics.mean(values),
+                        "valid_mean": statistics.mean(valid_values) if valid_values else "",
                         "std": statistics.stdev(values) if len(values) > 1 else 0.0,
                         "median": statistics.median(values),
                         "min": min(values),
@@ -518,7 +666,7 @@ def write_raw_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
 
 
 SUMMARY_FIELDS = [
-    "scenario", "policy", "metric", "mean", "std", "median", "min", "max", "episode_count",
+    "scenario", "policy", "metric", "mean", "valid_mean", "std", "median", "min", "max", "episode_count",
     "success_rate", "capture_rate", "out_of_bounds_rate", "timeout_rate",
 ]
 
@@ -541,15 +689,21 @@ def write_summary_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
 
 def _matrix_rows(summary_rows: Sequence[dict[str, Any]], metric: str) -> list[list[Any]]:
     rows: list[list[Any]] = [["scenario", *POLICIES]]
+    source_metric = VALID_METRIC_FIELDS_BY_RAW.get(metric, metric)
     for scenario in SCENARIOS:
         row: list[Any] = [scenario]
         for policy in POLICIES:
             matches = [
                 item
                 for item in summary_rows
-                if item["scenario"] == scenario and item["policy"] == policy and item["metric"] == metric
+                if item["scenario"] == scenario and item["policy"] == policy and item["metric"] == source_metric
             ]
-            row.append(matches[0]["mean"] if matches else "")
+            if not matches:
+                row.append("")
+            elif metric in VALID_METRIC_FIELDS_BY_RAW:
+                row.append(matches[0]["valid_mean"])
+            else:
+                row.append(matches[0]["mean"])
         rows.append(row)
     return rows
 
@@ -642,6 +796,7 @@ def write_behavior_workbook(
         ["core_metrics", "Seven existing metrics retained unchanged", ""],
         ["composite_score", "Not computed", ""],
         ["paired_initial_conditions", "One deep-copied initial Env3DState per scenario/trial", ""],
+        ["task_valid", "1 only for outcome=escaped; failed rows remain in raw data", ""],
         ["boundary_safe_threshold", boundary_safe_threshold, "normalized min_boundary_margin"],
         ["vertical_safe_threshold", vertical_safe_threshold, "normalized boundary_margin_z"],
         [],

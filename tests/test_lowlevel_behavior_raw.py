@@ -6,14 +6,20 @@ import pytest
 from src.evaluation.eval_lowlevel_behavior_raw import (
     absolute_trace_reduction,
     compute_raw_behavior_metrics,
+    compute_task_valid,
+    evader_path_length,
     fixed_reference_gaps,
+    gated_metric,
     non_decreasing_ratio,
+    rear_away_displacement_trace,
+    rear_escape_efficiency,
     late_window,
     early_window,
     non_closing_ratio,
     sample_paired_initial_state,
     summarize_rows,
     trace_change,
+    vertical_away_displacement_trace,
     write_behavior_workbook,
 )
 from src.env.dynamics import Agent3DState, Env3DState
@@ -98,6 +104,57 @@ def test_side_gap_increases_away_from_initial_side_and_ignores_heading() -> None
     assert side_gaps == pytest.approx([5.0, 7.0])
 
 
+def test_rear_away_displacement_prefers_threat_away_motion_over_side_motion() -> None:
+    initial = make_state()
+    away = make_state(evader=(2.0, 0.0, 0.0))
+    side = make_state(evader=(0.0, 2.0, 0.0))
+    assert rear_away_displacement_trace(initial, [initial, away])[-1] == pytest.approx(2.0)
+    assert rear_away_displacement_trace(initial, [initial, side])[-1] == pytest.approx(0.0)
+
+
+def test_rear_escape_efficiency_is_direct_one_and_reverse_negative() -> None:
+    initial = make_state()
+    direct = [initial, make_state(evader=(1.0, 0.0, 0.0)), make_state(evader=(2.0, 0.0, 0.0))]
+    winding = [
+        initial,
+        make_state(evader=(0.5, 1.0, 0.0)),
+        make_state(evader=(1.0, 0.0, 0.0)),
+        make_state(evader=(2.0, 0.0, 0.0)),
+    ]
+    reverse = [initial, make_state(evader=(-2.0, 0.0, 0.0))]
+    assert rear_escape_efficiency(initial, direct)[2] == pytest.approx(1.0)
+    assert rear_escape_efficiency(initial, direct)[2] > rear_escape_efficiency(initial, winding)[2]
+    assert rear_escape_efficiency(initial, reverse)[2] < 0.0
+    assert evader_path_length(direct) == pytest.approx(2.0)
+
+
+def test_vertical_away_displacement_is_positive_away_from_upper_or_lower_threat() -> None:
+    upper_threat = make_state(evader=(0.0, 0.0, 0.0), pursuer=(-5.0, 0.0, 5.0))
+    lower_threat = make_state(evader=(0.0, 0.0, 0.0), pursuer=(-5.0, 0.0, -5.0))
+    down = make_state(evader=(0.0, 0.0, -2.0), pursuer=(-5.0, 0.0, 5.0))
+    up = make_state(evader=(0.0, 0.0, 2.0), pursuer=(-5.0, 0.0, -5.0))
+    assert vertical_away_displacement_trace(upper_threat, [upper_threat, down])[-1] == pytest.approx(2.0)
+    assert vertical_away_displacement_trace(lower_threat, [lower_threat, up])[-1] == pytest.approx(2.0)
+
+
+def test_vertical_away_displacement_is_mirror_symmetric() -> None:
+    upper = make_state(evader=(0.0, 0.0, 0.0), pursuer=(-5.0, 0.0, 5.0))
+    upper_down = make_state(evader=(0.0, 0.0, -2.0), pursuer=(-5.0, 0.0, 5.0))
+    lower = make_state(evader=(0.0, 0.0, 0.0), pursuer=(-5.0, 0.0, -5.0))
+    lower_up = make_state(evader=(0.0, 0.0, 2.0), pursuer=(-5.0, 0.0, -5.0))
+    assert vertical_away_displacement_trace(upper, [upper, upper_down])[-1] == pytest.approx(
+        vertical_away_displacement_trace(lower, [lower, lower_up])[-1]
+    )
+
+
+def test_task_valid_and_gated_metric_keep_failures_as_zero_contribution() -> None:
+    assert compute_task_valid("escaped") == 1
+    for outcome in ("captured", "out_of_bounds", "timeout", "other"):
+        assert compute_task_valid(outcome) == 0
+    assert gated_metric(0, 3.5) == 0.0
+    assert gated_metric(1, 3.5) == 3.5
+
+
 def test_vertical_threat_reduction_is_mirror_symmetric() -> None:
     positive = absolute_trace_reduction([0.8, 0.4, 0.2])
     mirrored = absolute_trace_reduction([-0.8, -0.4, -0.2])
@@ -146,6 +203,23 @@ def test_summary_can_include_new_diagnostic_metrics() -> None:
     summary = summarize_rows([row], metrics=["rear_gap_gain"])
     assert summary[0]["metric"] == "rear_gap_gain"
     assert summary[0]["mean"] == 2.5
+
+
+def test_summary_keeps_raw_mean_and_valid_mean_together() -> None:
+    row = {
+        "scenario": "rear_close_threat",
+        "policy": "pi1",
+        "success": 0,
+        "captured": 0,
+        "out_of_bounds": 0,
+        "timeout": 1,
+        "distance_gain": 4.0,
+        "distance_gain_valid": 0.0,
+    }
+    summary = summarize_rows([row], metrics=["distance_gain"])
+    assert summary[0]["mean"] == 4.0
+    assert summary[0]["valid_mean"] == 0.0
+    assert summary[0]["success_rate"] == 0.0
 
 
 def test_workbook_contains_required_sheets_and_manifest(tmp_path: Path) -> None:

@@ -17,10 +17,13 @@ from __future__ import annotations
 import argparse
 import csv
 import copy
+import math
 import random
 import statistics
+import zipfile
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+from xml.sax.saxutils import escape
 
 from src.env.dynamics import Env3DState, relative_distance
 from src.env.pursuit_escape_env import PursuitEscapeEnv
@@ -58,6 +61,17 @@ BEHAVIOR_METRICS = [
     "vertical_separation_gain",
     "vertical_safe_ratio",
 ]
+DIAGNOSTIC_METRICS = [
+    "threat_forward_early_mean",
+    "threat_forward_late_mean",
+    "threat_forward_improvement",
+    "threat_up_early_mean",
+    "threat_up_late_mean",
+    "threat_up_improvement",
+    "final_evader_z",
+    "final_pursuer_z",
+]
+REPORT_METRICS = [*BEHAVIOR_METRICS, *DIAGNOSTIC_METRICS]
 MATRIX_FILENAMES = {
     "distance_gain": "distance_gain_matrix.csv",
     "non_closing_ratio": "non_closing_ratio_matrix.csv",
@@ -66,6 +80,24 @@ MATRIX_FILENAMES = {
     "safe_boundary_ratio": "safe_boundary_ratio_matrix.csv",
     "vertical_separation_gain": "vertical_separation_gain_matrix.csv",
     "vertical_safe_ratio": "vertical_safe_ratio_matrix.csv",
+}
+SHEET_MATRIX_METRICS = {
+    "Rear": [
+        "distance_gain",
+        "non_closing_ratio",
+        "threat_forward_early_mean",
+        "threat_forward_late_mean",
+        "threat_forward_improvement",
+    ],
+    "Flank": ["lateral_threat_reduction"],
+    "Boundary": ["boundary_margin_gain", "safe_boundary_ratio"],
+    "Vertical": [
+        "vertical_separation_gain",
+        "vertical_safe_ratio",
+        "threat_up_early_mean",
+        "threat_up_late_mean",
+        "threat_up_improvement",
+    ],
 }
 
 
@@ -88,6 +120,18 @@ def late_window(values: Sequence[float], fraction: float = 0.20) -> list[float]:
 def mean_or_zero(values: Iterable[float]) -> float:
     values = list(values)
     return float(statistics.mean(values)) if values else 0.0
+
+
+def trace_change(values: Sequence[float]) -> dict[str, float]:
+    """Summarize a signed diagnostic trace using the fixed early/late windows.
+
+    ``improvement`` is intentionally a signed change (late mean minus early
+    mean).  It is diagnostic only: no direction or weight is used in the seven
+    core behavior metrics.
+    """
+    early = mean_or_zero(early_window(values))
+    late = mean_or_zero(late_window(values))
+    return {"early_mean": early, "late_mean": late, "improvement": late - early}
 
 
 def non_closing_ratio(closing_speeds: Sequence[float]) -> float:
@@ -172,6 +216,27 @@ def _paired_env(scenario: str, initial_state: Env3DState) -> PursuitEscapeGymEnv
     return env
 
 
+def detect_out_of_bounds_axis(state: Env3DState, env: PursuitEscapeGymEnv, outcome: str) -> str:
+    """Return the terminal evader boundary axis using termination's bounds."""
+    if outcome != "out_of_bounds":
+        return "none"
+    position = state.evader
+    bounds = env.inner.term_cfg
+    if position.x < bounds.x_min:
+        return "x_min"
+    if position.x > bounds.x_max:
+        return "x_max"
+    if position.y < bounds.y_min:
+        return "y_min"
+    if position.y > bounds.y_max:
+        return "y_max"
+    if position.z < bounds.z_min:
+        return "z_min"
+    if position.z > bounds.z_max:
+        return "z_max"
+    return "none"
+
+
 def run_paired_episode(
     model: Any,
     *,
@@ -191,7 +256,9 @@ def run_paired_episode(
     obs = env._flatten_obs(obs_dict)
 
     distances = [relative_distance(state)]
+    threat_forward = [float(obs_dict["threat_forward"])]
     threat_right = [float(obs_dict["threat_right"])]
+    threat_up = [float(obs_dict["threat_up"])]
     min_boundary_margins = [float(obs_dict["min_boundary_margin"])]
     boundary_margin_z = [float(obs_dict["boundary_margin_z"])]
     vertical_separations = [abs(state.evader.z - state.pursuer.z)]
@@ -212,7 +279,9 @@ def run_paired_episode(
         obs_dict = _state_observation(env, closing_speed)
         distances.append(relative_distance(state))
         closing_speeds.append(closing_speed)
+        threat_forward.append(float(obs_dict["threat_forward"]))
         threat_right.append(float(obs_dict["threat_right"]))
+        threat_up.append(float(obs_dict["threat_up"]))
         min_boundary_margins.append(float(obs_dict["min_boundary_margin"]))
         boundary_margin_z.append(float(obs_dict["boundary_margin_z"]))
         vertical_separations.append(abs(state.evader.z - state.pursuer.z))
@@ -228,6 +297,9 @@ def run_paired_episode(
         boundary_safe_threshold=boundary_safe_threshold,
         vertical_safe_threshold=vertical_safe_threshold,
     )
+    forward_change = trace_change(threat_forward)
+    up_change = trace_change(threat_up)
+    out_of_bounds_axis = detect_out_of_bounds_axis(state, env, outcome)
     initial_state_fields = {
         "initial_evader_x": initial_state.evader.x,
         "initial_evader_y": initial_state.evader.y,
@@ -260,8 +332,17 @@ def run_paired_episode(
         "final_min_boundary_margin": min_boundary_margins[-1],
         "initial_vertical_separation": vertical_separations[0],
         "final_vertical_separation": vertical_separations[-1],
+        "final_evader_z": state.evader.z,
+        "final_pursuer_z": state.pursuer.z,
+        "out_of_bounds_axis": out_of_bounds_axis,
         "boundary_safe_threshold": boundary_safe_threshold,
         "vertical_safe_threshold": vertical_safe_threshold,
+        "threat_forward_early_mean": forward_change["early_mean"],
+        "threat_forward_late_mean": forward_change["late_mean"],
+        "threat_forward_improvement": forward_change["improvement"],
+        "threat_up_early_mean": up_change["early_mean"],
+        "threat_up_late_mean": up_change["late_mean"],
+        "threat_up_improvement": up_change["improvement"],
         **initial_state_fields,
         **metrics,
     }
@@ -279,8 +360,11 @@ def resolve_model_paths(args: argparse.Namespace) -> list[Path]:
     ]
 
 
-def summarize_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return long-form mean/std/median/min/max rows for raw behavior metrics."""
+def summarize_rows(
+    rows: Sequence[dict[str, Any]],
+    metrics: Sequence[str] = BEHAVIOR_METRICS,
+) -> list[dict[str, Any]]:
+    """Return long-form statistics without combining metrics into a score."""
     summary: list[dict[str, Any]] = []
     outcome_fields = (
         ("success", "success_rate"),
@@ -297,7 +381,7 @@ def summarize_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                 output_name: mean_or_zero(row[input_name] for row in group)
                 for input_name, output_name in outcome_fields
             }
-            for metric in BEHAVIOR_METRICS:
+            for metric in metrics:
                 values = [float(row[metric]) for row in group]
                 summary.append(
                     {
@@ -325,16 +409,206 @@ def write_raw_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def write_summary_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fields = [
-        "scenario", "policy", "metric", "mean", "std", "median", "min", "max", "episode_count",
-        "success_rate", "capture_rate", "out_of_bounds_rate", "timeout_rate",
+SUMMARY_FIELDS = [
+    "scenario", "policy", "metric", "mean", "std", "median", "min", "max", "episode_count",
+    "success_rate", "capture_rate", "out_of_bounds_rate", "timeout_rate",
+]
+
+
+def _summary_table_rows(summary_rows: Sequence[dict[str, Any]]) -> list[list[Any]]:
+    return [
+        SUMMARY_FIELDS,
+        *[[row.get(field, "") for field in SUMMARY_FIELDS] for row in summary_rows],
     ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
+
+
+def _matrix_rows(summary_rows: Sequence[dict[str, Any]], metric: str) -> list[list[Any]]:
+    rows: list[list[Any]] = [["scenario", *POLICIES]]
+    for scenario in SCENARIOS:
+        row: list[Any] = [scenario]
+        for policy in POLICIES:
+            matches = [
+                item
+                for item in summary_rows
+                if item["scenario"] == scenario and item["policy"] == policy and item["metric"] == metric
+            ]
+            row.append(matches[0]["mean"] if matches else "")
+        rows.append(row)
+    return rows
+
+
+def _outcome_axis_rows(raw_rows: Sequence[dict[str, Any]]) -> list[list[Any]]:
+    axes = ["x_min", "x_max", "y_min", "y_max", "z_min", "z_max", "none"]
+    rows: list[list[Any]] = [["scenario", "policy", *axes]]
+    for scenario in SCENARIOS:
+        for policy in POLICIES:
+            group = [row for row in raw_rows if row["scenario"] == scenario and row["policy"] == policy]
+            counts = {axis: sum(row.get("out_of_bounds_axis") == axis for row in group) for axis in axes}
+            rows.append([scenario, policy, *[counts[axis] for axis in axes]])
+    return rows
+
+
+def _xlsx_column_name(index: int) -> str:
+    result = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def _xlsx_value_cell(reference: str, value: Any) -> str:
+    if value is None or value == "":
+        return f'<c r="{reference}"/>'
+    if isinstance(value, bool):
+        return f'<c r="{reference}" t="b"><v>{int(value)}</v></c>'
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+        if math.isfinite(number):
+            return f'<c r="{reference}"><v>{number:.15g}</v></c>'
+    text = escape(str(value))
+    return f'<c r="{reference}" t="inlineStr"><is><t>{text}</t></is></c>'
+
+
+def _xlsx_sheet_xml(rows: Sequence[Sequence[Any]]) -> str:
+    widths: dict[int, int] = {}
+    xml_rows: list[str] = []
+    for row_index, row in enumerate(rows, start=1):
+        cells: list[str] = []
+        for column_index, value in enumerate(row, start=1):
+            widths[column_index] = min(
+                50,
+                max(widths.get(column_index, 10), len(str(value)) + 2 if value not in (None, "") else 10),
+            )
+            cells.append(_xlsx_value_cell(f"{_xlsx_column_name(column_index)}{row_index}", value))
+        xml_rows.append(f'<row r="{row_index}">{"".join(cells)}</row>')
+    columns = "".join(
+        f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>'
+        for index, width in widths.items()
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"<cols>{columns}</cols><sheetData>{''.join(xml_rows)}</sheetData>"
+        "</worksheet>"
+    )
+
+
+def _xlsx_styles_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<numFmts count="0"/>'
+        '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="2"><fill><patternFill patternType="none"/></fill>'
+        '<fill><patternFill patternType="gray125"/></fill></fills>'
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>'
+        '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+        '</styleSheet>'
+    )
+
+
+def write_behavior_workbook(
+    path: Path,
+    *,
+    raw_rows: Sequence[dict[str, Any]],
+    summary_rows: Sequence[dict[str, Any]],
+    model_paths: Sequence[Path],
+    boundary_safe_threshold: float,
+    vertical_safe_threshold: float,
+) -> None:
+    """Write the default single-workbook report using only Python's stdlib."""
+    manifest_rows: list[list[Any]] = [
+        ["item", "value", "filename"],
+        ["report", "Paired raw low-level behavior evaluation diagnostics", ""],
+        ["core_metrics", "Seven existing metrics retained unchanged", ""],
+        ["composite_score", "Not computed", ""],
+        ["paired_initial_conditions", "One deep-copied initial Env3DState per scenario/trial", ""],
+        ["boundary_safe_threshold", boundary_safe_threshold, "normalized min_boundary_margin"],
+        ["vertical_safe_threshold", vertical_safe_threshold, "normalized boundary_margin_z"],
+        [],
+        ["policy", "checkpoint_full_path", "checkpoint_filename"],
+    ]
+    for policy, model_path in zip(POLICIES, model_paths):
+        resolved = model_path.resolve()
+        manifest_rows.append([policy, str(resolved), resolved.name])
+
+    summary_sheet: list[list[Any]] = [
+        ["Behavior evaluation summary"],
+        ["Raw episode data: behavior_metrics_raw.csv"],
+        ["No composite score, weighting, or diagonal pass/fail decision is computed."],
+        [],
+        *_summary_table_rows(summary_rows),
+        [],
+        ["Out-of-bounds axis counts (terminal evader position)"],
+        *_outcome_axis_rows(raw_rows),
+    ]
+    sheets: list[tuple[str, list[list[Any]]]] = [
+        ("Summary", summary_sheet),
+        ("Manifest", manifest_rows),
+    ]
+    for sheet_name, metrics in SHEET_MATRIX_METRICS.items():
+        sheet_rows: list[list[Any]] = [
+            [f"{sheet_name} scenario diagnostics"],
+            ["Each matrix cell is the episode mean for one scenario × policy pair."],
+            [],
+        ]
+        for metric in metrics:
+            sheet_rows.extend([[metric], *_matrix_rows(summary_rows, metric), []])
+        if sheet_name == "Boundary":
+            sheet_rows.extend([["out_of_bounds_axis_counts"], *_outcome_axis_rows(raw_rows)])
+        sheets.append((sheet_name, sheet_rows))
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+        + "".join(
+            f'<sheet name="{escape(name)}" sheetId="{index}" r:id="rId{index}"/>'
+            for index, (name, _) in enumerate(sheets, start=1)
+        )
+        + "</sheets></workbook>"
+    )
+    relationships = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + "".join(
+            f'<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            f'Target="worksheets/sheet{index}.xml"/>'
+            for index in range(1, len(sheets) + 1)
+        )
+        + f'<Relationship Id="rId{len(sheets) + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        + "</Relationships>"
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        + "".join(
+            f'<Override PartName="/xl/worksheets/sheet{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            for index in range(1, len(sheets) + 1)
+        )
+        + "</Types>"
+    )
+    root_relationships = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", root_relationships)
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", relationships)
+        archive.writestr("xl/styles.xml", _xlsx_styles_xml())
+        for index, (_, sheet_rows) in enumerate(sheets, start=1):
+            archive.writestr(f"xl/worksheets/sheet{index}.xml", _xlsx_sheet_xml(sheet_rows))
 
 
 def write_mean_matrices(out_dir: Path, summary_rows: Sequence[dict[str, Any]]) -> None:
@@ -373,6 +647,11 @@ def main() -> None:
     parser.add_argument("--policy2-checkpoint", default="")
     parser.add_argument("--policy3-checkpoint", default="")
     parser.add_argument("--policy4-checkpoint", default="")
+    parser.add_argument(
+        "--export-matrix-csv",
+        action="store_true",
+        help="also export the legacy seven matrix CSV files (off by default)",
+    )
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
@@ -418,12 +697,20 @@ def main() -> None:
 
     out_dir = Path(args.output_dir)
     write_raw_csv(out_dir / "behavior_metrics_raw.csv", rows)
-    summary_rows = summarize_rows(rows)
-    write_summary_csv(out_dir / "behavior_metrics_summary.csv", summary_rows)
-    write_mean_matrices(out_dir, summary_rows)
+    summary_rows = summarize_rows(rows, metrics=REPORT_METRICS)
+    write_behavior_workbook(
+        out_dir / "behavior_evaluation.xlsx",
+        raw_rows=rows,
+        summary_rows=summary_rows,
+        model_paths=model_paths,
+        boundary_safe_threshold=args.boundary_safe_threshold,
+        vertical_safe_threshold=args.vertical_safe_threshold,
+    )
     print(f"[csv] raw: {out_dir / 'behavior_metrics_raw.csv'}")
-    print(f"[csv] summary: {out_dir / 'behavior_metrics_summary.csv'}")
-    print(f"[csv] matrices: {len(MATRIX_FILENAMES)}")
+    print(f"[xlsx] report: {out_dir / 'behavior_evaluation.xlsx'}")
+    if args.export_matrix_csv:
+        write_mean_matrices(out_dir, summary_rows)
+        print(f"[csv] legacy matrices: {len(MATRIX_FILENAMES)}")
     print("No composite behavior score or diagonal pass/fail decision was computed.")
 
 

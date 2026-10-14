@@ -103,10 +103,10 @@ def _plot_policy(policy_dir: Path, output_dir: Path, window: int, source: str, p
 
     fig, axis = plt.subplots(figsize=(8, 4.5))
     if using_progress:
-        axis.plot(steps, returns, linewidth=1.8, label="Mean episode reward")
+        axis.plot(steps, returns, linewidth=1.8, label="average reward")
     else:
-        axis.plot(steps, returns, alpha=0.28, linewidth=0.8, label="Raw episode reward")
-        axis.plot(steps, moving, linewidth=1.8, label="Moving-average reward")
+        axis.plot(steps, returns, alpha=0.28, linewidth=0.8, label="episode reward")
+        axis.plot(steps, moving, linewidth=1.8, label="average reward")
     axis.set_xlabel("environment step")
     axis.set_ylabel("mean episode reward" if using_progress else "episode reward")
     axis.set_title(f"{policy_name}: training reward")
@@ -142,7 +142,7 @@ def main() -> None:
         "--source",
         choices=["episode", "progress"],
         default="episode",
-        help="episode=raw episode returns plus one moving average; progress=SB3 rollout mean",
+        help="episode=raw episode rewards plus one average reward curve; progress=SB3 rollout mean",
     )
     args = parser.parse_args()
     if args.window <= 0:
@@ -179,7 +179,7 @@ def main() -> None:
             else:
                 axis.plot(steps, _moving_average(returns, args.window), linewidth=1.6, label=policy_name)
         axis.set_xlabel("environment step")
-        axis.set_ylabel("moving-average episode reward")
+        axis.set_ylabel("average episode reward")
         axis.set_title("Low-level SAC training reward (diagnostic comparison)")
         axis.grid(alpha=0.25)
         axis.legend()

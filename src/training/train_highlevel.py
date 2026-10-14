@@ -1,26 +1,61 @@
-"""Train high-level PPO option selector over four frozen low-level SAC policies."""
+"""Train the high-level PPO selector with frozen low-level models and logs."""
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 from pathlib import Path
+
+from src.training.training_logging import (
+    EpisodeRewardCallback,
+    assert_new_output_dir,
+    build_run_manifest,
+    checkpoint_callback,
+    combine_callbacks,
+    configure_logger,
+    utc_now,
+    write_manifest,
+)
+
+
+def _default_low_model_paths() -> list[str]:
+    root = Path("outputs/retraining_20261014/formal_lowlevel_50000_seed0")
+    return [
+        str(root / "pi1_rear/pi1_rear__formal50000__seed0__final.zip"),
+        str(root / "pi2_flank/pi2_flank__formal50000__seed0__final.zip"),
+        str(root / "pi3_boundary/pi3_boundary__formal50000__seed0__final.zip"),
+        str(root / "pi4_vertical/pi4_vertical__formal50000__seed0__final.zip"),
+    ]
+
+
+def _run_label(timesteps: int) -> str:
+    if timesteps == 80_000:
+        return "formal80000"
+    if timesteps == 500:
+        return "smoke500"
+    return f"run{timesteps}"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train high-level PPO option selector")
-    parser.add_argument("--low-model-1", default="outputs/checkpoints/sac_low_1_rear_close_threat.zip")
-    parser.add_argument("--low-model-2", default="outputs/checkpoints/sac_low_2_flank_threat.zip")
-    parser.add_argument("--low-model-3", default="outputs/checkpoints/sac_low_3_boundary_constrained.zip")
-    parser.add_argument("--low-model-4", default="outputs/checkpoints/sac_low_4_vertical_z_threat.zip")
+    parser = argparse.ArgumentParser(description="Train high-level PPO option selector with full run logging")
+    default_low = _default_low_model_paths()
+    parser.add_argument("--low-model-1", default=default_low[0])
+    parser.add_argument("--low-model-2", default=default_low[1])
+    parser.add_argument("--low-model-3", default=default_low[2])
+    parser.add_argument("--low-model-4", default=default_low[3])
     parser.add_argument("--timesteps", type=int, default=80_000)
-    parser.add_argument("--model-out", default="outputs/checkpoints/ppo_highlevel_switch.zip")
-    parser.add_argument("--log-dir", default="", help="optional tensorboard log dir; leave empty to disable")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--run-dir", default="outputs/retraining_20261014/formal_highlevel_seed0")
+    parser.add_argument("--model-out", default="")
+    parser.add_argument("--checkpoint-freq", type=int, default=5_000)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="composite")
+    parser.add_argument(
+        "--scenario-set",
+        choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"],
+        default="composite",
+    )
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
@@ -31,60 +66,150 @@ def main() -> None:
     parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
     parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
+    if args.timesteps <= 0:
+        parser.error("--timesteps must be positive")
+    if args.checkpoint_freq < 0:
+        parser.error("--checkpoint-freq must be non-negative")
 
-    from stable_baselines3 import PPO, SAC
-    from stable_baselines3.common.vec_env import DummyVecEnv
+    try:
+        from stable_baselines3 import PPO, SAC
+        from stable_baselines3.common.monitor import Monitor
+        from stable_baselines3.common.vec_env import DummyVecEnv
+    except Exception as exc:
+        raise RuntimeError("stable-baselines3, gymnasium, and tensorboard are required.") from exc
 
     from src.training.highlevel_env import HighLevelOptionEnv
 
-    low_paths = [args.low_model_1, args.low_model_2, args.low_model_3, args.low_model_4]
-    for p in low_paths:
-        if not Path(p).exists():
-            raise FileNotFoundError(f"Missing low-level model: {p}")
+    low_paths = [Path(args.low_model_1), Path(args.low_model_2), Path(args.low_model_3), Path(args.low_model_4)]
+    missing = [path for path in low_paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing low-level model(s): {missing}")
 
-    low_models = [SAC.load(p, device=args.device) for p in low_paths]
+    run_dir = Path(args.run_dir)
+    assert_new_output_dir(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "plots").mkdir(parents=True, exist_ok=True)
+    final_model = (
+        Path(args.model_out)
+        if args.model_out
+        else run_dir / f"checkpoints/ppo_highlevel__{_run_label(args.timesteps)}__seed{args.seed}__final.zip"
+    )
+    assert_new_output_dir(final_model)
+    monitor_path = run_dir / "monitor.csv"
+    reward_csv = run_dir / "episode_rewards.csv"
+    tensorboard_dir = run_dir / "tensorboard"
+    checkpoint_dir = run_dir / "checkpoints"
 
-    tensorboard_log = None
-    normalized_log_dir = args.log_dir.strip()
-    if normalized_log_dir:
-        if importlib.util.find_spec("tensorboard") is None:
-            print("[highlevel] tensorboard not installed, disabling --log-dir automatically.")
-        else:
-            Path(normalized_log_dir).mkdir(parents=True, exist_ok=True)
-            tensorboard_log = normalized_log_dir
+    low_models = [SAC.load(str(path), device=args.device) for path in low_paths]
 
-    Path(args.model_out).parent.mkdir(parents=True, exist_ok=True)
-    env = DummyVecEnv([lambda: HighLevelOptionEnv(
-        low_models=low_models,
-        option_duration=args.option_duration,
-        switch_penalty=args.switch_penalty,
-        max_highlevel_steps=args.max_highlevel_steps,
-        scenario_set=args.scenario_set,
-        episode_lowlevel_steps=args.episode_lowlevel_steps,
-        regime_duration=args.regime_duration,
-        pursuer_speed_ratio=args.pursuer_speed_ratio,
-        regime_schedule=args.regime_schedule,
-        min_regime_hold_steps=args.min_regime_hold_steps,
-        boundary_priority_enter=args.boundary_priority_enter,
-        boundary_priority_exit=args.boundary_priority_exit,
-        showcase_bound_scale=args.showcase_bound_scale,
-        showcase_z_bound_scale=args.showcase_z_bound_scale,
-    )])
+    def make_env():
+        base_env = HighLevelOptionEnv(
+            low_models=low_models,
+            option_duration=args.option_duration,
+            switch_penalty=args.switch_penalty,
+            max_highlevel_steps=args.max_highlevel_steps,
+            scenario_set=args.scenario_set,
+            episode_lowlevel_steps=args.episode_lowlevel_steps,
+            regime_duration=args.regime_duration,
+            pursuer_speed_ratio=args.pursuer_speed_ratio,
+            regime_schedule=args.regime_schedule,
+            min_regime_hold_steps=args.min_regime_hold_steps,
+            boundary_priority_enter=args.boundary_priority_enter,
+            boundary_priority_exit=args.boundary_priority_exit,
+            showcase_bound_scale=args.showcase_bound_scale,
+            showcase_z_bound_scale=args.showcase_z_bound_scale,
+        )
+        return Monitor(base_env, filename=str(monitor_path))
+
+    env = DummyVecEnv([make_env])
+    env.seed(args.seed)
+    logger = configure_logger(run_dir, tensorboard_dir)
+    episode_callback = EpisodeRewardCallback(reward_csv, policy_name="highlevel_ppo", seed=args.seed)
+    callbacks = combine_callbacks(
+        [episode_callback, checkpoint_callback(checkpoint_dir, args.checkpoint_freq, "ppo_highlevel")]
+    )
+    hyperparameters = {
+        "n_steps": 1024,
+        "batch_size": 256,
+        "learning_rate": 3e-4,
+        "gamma": 0.99,
+        "option_duration": args.option_duration,
+        "switch_penalty": args.switch_penalty,
+        "scenario_set": args.scenario_set,
+        "episode_lowlevel_steps": args.episode_lowlevel_steps,
+        "low_model_paths": [str(path.resolve()) for path in low_paths],
+    }
+    started_at = utc_now()
+    manifest_path = run_dir / "run_manifest.json"
+    write_manifest(
+        manifest_path,
+        build_run_manifest(
+            experiment_name=run_dir.name,
+            policy_name="highlevel_ppo",
+            status="running",
+            seed=args.seed,
+            total_timesteps=args.timesteps,
+            env=env,
+            algorithm="PPO",
+            hyperparameters=hyperparameters,
+            run_dir=run_dir,
+            final_model=final_model,
+            reward_csv=reward_csv,
+            monitor_csv=monitor_path,
+            tensorboard_dir=tensorboard_dir,
+            checkpoint_dir=checkpoint_dir,
+            started_at=started_at,
+            finished_at=None,
+            callback=episode_callback,
+            actual_num_timesteps=0,
+        ),
+    )
 
     model = PPO(
         policy="MlpPolicy",
         env=env,
         verbose=1,
-        tensorboard_log=tensorboard_log,
+        tensorboard_log=None,
         device=args.device,
+        seed=args.seed,
         n_steps=1024,
         batch_size=256,
         learning_rate=3e-4,
         gamma=0.99,
     )
-    model.learn(total_timesteps=args.timesteps, progress_bar=True)
-    model.save(args.model_out)
-    print(f"[highlevel] PPO option selector done. model={args.model_out}")
+    model.set_logger(logger)
+    status = "failed"
+    try:
+        model.learn(total_timesteps=args.timesteps, callback=callbacks, progress_bar=True)
+        final_model.parent.mkdir(parents=True, exist_ok=True)
+        model.save(str(final_model))
+        status = "completed"
+    finally:
+        write_manifest(
+            manifest_path,
+            build_run_manifest(
+                experiment_name=run_dir.name,
+                policy_name="highlevel_ppo",
+                status=status,
+                seed=args.seed,
+                total_timesteps=args.timesteps,
+                env=env,
+                algorithm="PPO",
+                hyperparameters=hyperparameters,
+                run_dir=run_dir,
+                final_model=final_model,
+                reward_csv=reward_csv,
+                monitor_csv=monitor_path,
+                tensorboard_dir=tensorboard_dir,
+                checkpoint_dir=checkpoint_dir,
+                started_at=started_at,
+                finished_at=utc_now(),
+                callback=episode_callback,
+                actual_num_timesteps=int(model.num_timesteps),
+            ),
+        )
+        env.close()
+    print(f"[highlevel] PPO option selector done. model={final_model}")
 
 
 if __name__ == "__main__":

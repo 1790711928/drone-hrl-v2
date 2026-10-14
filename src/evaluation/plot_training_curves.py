@@ -79,7 +79,9 @@ def _plot_policy(
     output_dir: Path,
     window: int,
     source: str,
+    min_step: int | None,
     max_step: int | None,
+    reindex_step: int | None,
     plt,
 ) -> tuple[str, list[dict[str, float]]]:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -93,11 +95,29 @@ def _plot_policy(
     else:
         rows = episode_rows or progress_rows
         using_progress = not bool(episode_rows) and bool(progress_rows)
+    if min_step is not None:
+        rows = [row for row in rows if row["global_step"] >= min_step]
+        episode_rows = [row for row in episode_rows if row["global_step"] >= min_step]
     if max_step is not None:
         rows = [row for row in rows if row["global_step"] <= max_step]
         episode_rows = [row for row in episode_rows if row["global_step"] <= max_step]
     if not rows:
-        raise ValueError(f"no data rows at or below --max-step={max_step}: {reward_path}")
+        raise ValueError(f"no data rows in the requested step range: {reward_path}")
+    if reindex_step is not None:
+        source_start = min_step if min_step is not None else rows[0]["global_step"]
+        source_end = max_step if max_step is not None else rows[-1]["global_step"]
+        source_span = source_end - source_start
+        if source_span <= 0:
+            raise ValueError("the selected step range must have a positive span for reindexing")
+
+        def reindex(row: dict[str, float]) -> dict[str, float]:
+            return {
+                **row,
+                "global_step": (row["global_step"] - source_start) / source_span * reindex_step,
+            }
+
+        rows = [reindex(row) for row in rows]
+        episode_rows = [reindex(row) for row in episode_rows]
     policy_name = policy_dir.name
     if using_progress:
         with (output_dir / f"{policy_name}_plot_data.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -148,11 +168,18 @@ def main() -> None:
     parser.add_argument("--input-root", required=True, help="experiment directory containing pi*/episode_rewards.csv")
     parser.add_argument("--output-dir", default="", help="defaults to <input-root>/plots")
     parser.add_argument("--window", type=int, default=20)
+    parser.add_argument("--min-step", type=int, default=None, help="optional lower bound on displayed environment steps")
     parser.add_argument(
         "--max-step",
         type=int,
         default=None,
         help="optional upper bound on displayed environment steps; raw CSV files remain unchanged",
+    )
+    parser.add_argument(
+        "--reindex-step",
+        type=int,
+        default=None,
+        help="optionally map the selected step interval onto 0..N for a diagnostic plot",
     )
     parser.add_argument(
         "--source",
@@ -165,6 +192,12 @@ def main() -> None:
         parser.error("--window must be positive")
     if args.max_step is not None and args.max_step <= 0:
         parser.error("--max-step must be positive")
+    if args.min_step is not None and args.min_step < 0:
+        parser.error("--min-step must be non-negative")
+    if args.min_step is not None and args.max_step is not None and args.max_step <= args.min_step:
+        parser.error("--max-step must be greater than --min-step")
+    if args.reindex_step is not None and args.reindex_step <= 0:
+        parser.error("--reindex-step must be positive")
 
     import matplotlib
 
@@ -185,7 +218,18 @@ def main() -> None:
 
     plotted: list[tuple[str, list[dict[str, float]]]] = []
     for policy_dir in policy_dirs:
-        plotted.append(_plot_policy(policy_dir, output_dir, args.window, args.source, args.max_step, plt))
+        plotted.append(
+            _plot_policy(
+                policy_dir,
+                output_dir,
+                args.window,
+                args.source,
+                args.min_step,
+                args.max_step,
+                args.reindex_step,
+                plt,
+            )
+        )
 
     if len(plotted) > 1:
         fig, axis = plt.subplots(figsize=(9, 5))

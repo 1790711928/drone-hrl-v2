@@ -74,17 +74,22 @@ def _write_plot_data(path: Path, rows: list[dict[str, float]], window: int) -> N
             writer.writerow({**row, "moving_average": average})
 
 
-def _plot_policy(policy_dir: Path, output_dir: Path, window: int, plt) -> tuple[str, list[dict[str, float]]]:
+def _plot_policy(policy_dir: Path, output_dir: Path, window: int, source: str, plt) -> tuple[str, list[dict[str, float]]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     reward_path = policy_dir / "episode_rewards.csv"
     progress_path = policy_dir / "progress.csv"
     episode_rows = _read_rows(reward_path)
     progress_rows = _read_progress_rows(progress_path) if progress_path.exists() else []
-    rows = progress_rows or episode_rows
+    if source == "progress":
+        rows = progress_rows or episode_rows
+        using_progress = bool(progress_rows)
+    else:
+        rows = episode_rows or progress_rows
+        using_progress = not bool(episode_rows) and bool(progress_rows)
     if not rows:
         raise ValueError(f"episode_rewards.csv has no data rows: {reward_path}")
     policy_name = policy_dir.name
-    if progress_rows:
+    if using_progress:
         with (output_dir / f"{policy_name}_plot_data.csv").open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=["global_step", "mean_episode_reward"])
             writer.writeheader()
@@ -94,16 +99,16 @@ def _plot_policy(policy_dir: Path, output_dir: Path, window: int, plt) -> tuple[
         _write_plot_data(output_dir / f"{policy_name}_plot_data.csv", rows, window)
     steps = [row["global_step"] for row in rows]
     returns = [row["episode_return"] for row in rows]
-    moving = returns if progress_rows else _moving_average(returns, window)
+    moving = returns if using_progress else _moving_average(returns, window)
 
     fig, axis = plt.subplots(figsize=(8, 4.5))
-    if progress_rows:
+    if using_progress:
         axis.plot(steps, returns, linewidth=1.8, label="mean episode reward")
     else:
         axis.plot(steps, returns, alpha=0.28, linewidth=0.8, label="episode return")
         axis.plot(steps, moving, linewidth=1.8, label=f"moving average ({window})")
     axis.set_xlabel("environment step")
-    axis.set_ylabel("mean episode reward" if progress_rows else "episode reward")
+    axis.set_ylabel("mean episode reward" if using_progress else "episode return")
     axis.set_title(f"{policy_name}: training reward")
     axis.grid(alpha=0.25)
     axis.legend()
@@ -133,6 +138,12 @@ def main() -> None:
     parser.add_argument("--input-root", required=True, help="experiment directory containing pi*/episode_rewards.csv")
     parser.add_argument("--output-dir", default="", help="defaults to <input-root>/plots")
     parser.add_argument("--window", type=int, default=20)
+    parser.add_argument(
+        "--source",
+        choices=["episode", "progress"],
+        default="episode",
+        help="episode=raw episode returns plus one moving average; progress=SB3 rollout mean",
+    )
     args = parser.parse_args()
     if args.window <= 0:
         parser.error("--window must be positive")
@@ -156,14 +167,17 @@ def main() -> None:
 
     plotted: list[tuple[str, list[dict[str, float]]]] = []
     for policy_dir in policy_dirs:
-        plotted.append(_plot_policy(policy_dir, output_dir, args.window, plt))
+        plotted.append(_plot_policy(policy_dir, output_dir, args.window, args.source, plt))
 
     if len(plotted) > 1:
         fig, axis = plt.subplots(figsize=(9, 5))
         for policy_name, rows in plotted:
             steps = [row["global_step"] for row in rows]
             returns = [row["episode_return"] for row in rows]
-            axis.plot(steps, _moving_average(returns, args.window), linewidth=1.6, label=policy_name)
+            if args.source == "progress":
+                axis.plot(steps, returns, linewidth=1.6, label=policy_name)
+            else:
+                axis.plot(steps, _moving_average(returns, args.window), linewidth=1.6, label=policy_name)
         axis.set_xlabel("environment step")
         axis.set_ylabel("moving-average episode reward")
         axis.set_title("Low-level SAC training reward (diagnostic comparison)")

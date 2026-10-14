@@ -74,7 +74,14 @@ def _write_plot_data(path: Path, rows: list[dict[str, float]], window: int) -> N
             writer.writerow({**row, "moving_average": average})
 
 
-def _plot_policy(policy_dir: Path, output_dir: Path, window: int, source: str, plt) -> tuple[str, list[dict[str, float]]]:
+def _plot_policy(
+    policy_dir: Path,
+    output_dir: Path,
+    window: int,
+    source: str,
+    max_step: int | None,
+    plt,
+) -> tuple[str, list[dict[str, float]]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     reward_path = policy_dir / "episode_rewards.csv"
     progress_path = policy_dir / "progress.csv"
@@ -86,8 +93,11 @@ def _plot_policy(policy_dir: Path, output_dir: Path, window: int, source: str, p
     else:
         rows = episode_rows or progress_rows
         using_progress = not bool(episode_rows) and bool(progress_rows)
+    if max_step is not None:
+        rows = [row for row in rows if row["global_step"] <= max_step]
+        episode_rows = [row for row in episode_rows if row["global_step"] <= max_step]
     if not rows:
-        raise ValueError(f"episode_rewards.csv has no data rows: {reward_path}")
+        raise ValueError(f"no data rows at or below --max-step={max_step}: {reward_path}")
     policy_name = policy_dir.name
     if using_progress:
         with (output_dir / f"{policy_name}_plot_data.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -139,6 +149,12 @@ def main() -> None:
     parser.add_argument("--output-dir", default="", help="defaults to <input-root>/plots")
     parser.add_argument("--window", type=int, default=20)
     parser.add_argument(
+        "--max-step",
+        type=int,
+        default=None,
+        help="optional upper bound on displayed environment steps; raw CSV files remain unchanged",
+    )
+    parser.add_argument(
         "--source",
         choices=["episode", "progress"],
         default="episode",
@@ -147,6 +163,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.window <= 0:
         parser.error("--window must be positive")
+    if args.max_step is not None and args.max_step <= 0:
+        parser.error("--max-step must be positive")
 
     import matplotlib
 
@@ -167,7 +185,7 @@ def main() -> None:
 
     plotted: list[tuple[str, list[dict[str, float]]]] = []
     for policy_dir in policy_dirs:
-        plotted.append(_plot_policy(policy_dir, output_dir, args.window, args.source, plt))
+        plotted.append(_plot_policy(policy_dir, output_dir, args.window, args.source, args.max_step, plt))
 
     if len(plotted) > 1:
         fig, axis = plt.subplots(figsize=(9, 5))

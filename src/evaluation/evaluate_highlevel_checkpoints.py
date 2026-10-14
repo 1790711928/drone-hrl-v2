@@ -1,0 +1,182 @@
+"""Evaluate high-level PPO checkpoints on paired deterministic episodes.
+
+This is post-training evaluation only.  It does not modify training, rewards,
+low-level models, or checkpoints.  Every checkpoint is evaluated on the same
+episode seeds so the resulting success-rate curve is paired across training
+progress.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import re
+import statistics
+from pathlib import Path
+
+
+def _checkpoint_step(path: Path) -> int:
+    match = re.search(r"(\d+)_steps\.zip$", path.name)
+    if match is None:
+        raise ValueError(f"checkpoint filename does not contain '<steps>_steps.zip': {path.name}")
+    return int(match.group(1))
+
+
+def _collect_checkpoints(checkpoint_dir: Path, pattern: str, max_step: int | None) -> list[Path]:
+    paths = sorted(checkpoint_dir.glob(pattern), key=_checkpoint_step)
+    if max_step is not None:
+        paths = [path for path in paths if _checkpoint_step(path) <= max_step]
+    if not paths:
+        raise FileNotFoundError(f"no checkpoints matched {pattern!r} below {checkpoint_dir}")
+    return paths
+
+
+def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwargs: dict) -> dict[str, float | int | str]:
+    from src.training.highlevel_env import HighLevelOptionEnv
+
+    outcomes: list[str] = []
+    rewards: list[float] = []
+    lengths: list[int] = []
+    env = HighLevelOptionEnv(low_models=low_models, **env_kwargs)
+    try:
+        for trial in range(episodes):
+            episode_seed = seed + trial
+            obs, _ = env.reset(seed=episode_seed, options={"scenario_set": env_kwargs["scenario_set"]})
+            total_reward = 0.0
+            steps = 0
+            terminated = False
+            truncated = False
+            info: dict = {"outcome": "timeout"}
+            while not (terminated or truncated):
+                action, _ = model.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, info = env.step(int(action))
+                total_reward += float(reward)
+                steps += 1
+            outcomes.append(str(info.get("outcome", "timeout")))
+            rewards.append(total_reward)
+            lengths.append(steps)
+    finally:
+        env.close()
+
+    denominator = max(len(outcomes), 1)
+    return {
+        "episodes": len(outcomes),
+        "win_rate": sum(outcome == "escaped" for outcome in outcomes) / denominator,
+        "capture_rate": sum(outcome == "captured" for outcome in outcomes) / denominator,
+        "out_of_bounds_rate": sum(outcome == "out_of_bounds" for outcome in outcomes) / denominator,
+        "timeout_rate": sum(outcome == "timeout" for outcome in outcomes) / denominator,
+        "mean_reward": statistics.mean(rewards) if rewards else 0.0,
+        "std_reward": statistics.pstdev(rewards) if len(rewards) > 1 else 0.0,
+        "mean_episode_length": statistics.mean(lengths) if lengths else 0.0,
+    }
+
+
+def _write_plot(rows: list[dict[str, float | int | str]], output_path: Path) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    steps = [int(row["checkpoint_step"]) for row in rows]
+    rates = [100.0 * float(row["win_rate"]) for row in rows]
+    fig, axis = plt.subplots(figsize=(8, 4.5))
+    axis.plot(steps, rates, marker="o", linewidth=1.8, label="high-level PPO win rate")
+    axis.set_xlabel("training step")
+    axis.set_ylabel("win rate (%)")
+    axis.set_title("High-level PPO win rate")
+    axis.set_ylim(0.0, 100.0)
+    axis.grid(alpha=0.25)
+    axis.legend(loc="lower right")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate high-level PPO checkpoint win rates")
+    parser.add_argument("--checkpoint-dir", required=True)
+    parser.add_argument("--checkpoint-pattern", default="ppo_highlevel_*_steps.zip")
+    parser.add_argument("--max-checkpoint-step", type=int, default=None)
+    parser.add_argument("--low-model-1", required=True)
+    parser.add_argument("--low-model-2", required=True)
+    parser.add_argument("--low-model-3", required=True)
+    parser.add_argument("--low-model-4", required=True)
+    parser.add_argument("--episodes", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--scenario-set", default="composite")
+    parser.add_argument("--option-duration", type=int, default=8)
+    parser.add_argument("--switch-penalty", type=float, default=0.02)
+    parser.add_argument("--max-highlevel-steps", type=int, default=80)
+    parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--regime-duration", type=int, default=60)
+    parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
+    parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
+    parser.add_argument("--min-regime-hold-steps", type=int, default=20)
+    parser.add_argument("--boundary-priority-enter", type=float, default=0.24)
+    parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
+    parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
+    parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
+    args = parser.parse_args()
+    if args.episodes <= 0:
+        parser.error("--episodes must be positive")
+    if args.max_checkpoint_step is not None and args.max_checkpoint_step <= 0:
+        parser.error("--max-checkpoint-step must be positive")
+
+    try:
+        from stable_baselines3 import PPO, SAC
+    except Exception as exc:
+        raise RuntimeError("stable-baselines3 and gymnasium are required") from exc
+
+    low_paths = [Path(args.low_model_1), Path(args.low_model_2), Path(args.low_model_3), Path(args.low_model_4)]
+    missing = [path for path in low_paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"missing low-level model(s): {missing}")
+    checkpoints = _collect_checkpoints(Path(args.checkpoint_dir), args.checkpoint_pattern, args.max_checkpoint_step)
+    low_models = [SAC.load(str(path), device=args.device) for path in low_paths]
+    env_kwargs = {
+        "option_duration": args.option_duration,
+        "switch_penalty": args.switch_penalty,
+        "max_highlevel_steps": args.max_highlevel_steps,
+        "scenario_set": args.scenario_set,
+        "episode_lowlevel_steps": args.episode_lowlevel_steps,
+        "regime_duration": args.regime_duration,
+        "pursuer_speed_ratio": args.pursuer_speed_ratio,
+        "regime_schedule": args.regime_schedule,
+        "min_regime_hold_steps": args.min_regime_hold_steps,
+        "boundary_priority_enter": args.boundary_priority_enter,
+        "boundary_priority_exit": args.boundary_priority_exit,
+        "showcase_bound_scale": args.showcase_bound_scale,
+        "showcase_z_bound_scale": args.showcase_z_bound_scale,
+    }
+
+    rows: list[dict[str, float | int | str]] = []
+    for checkpoint in checkpoints:
+        model = PPO.load(str(checkpoint), device=args.device)
+        result = _evaluate_checkpoint(model, low_models, episodes=args.episodes, seed=args.seed, env_kwargs=env_kwargs)
+        row = {"checkpoint": checkpoint.name, "checkpoint_step": _checkpoint_step(checkpoint), **result}
+        rows.append(row)
+        print(
+            f"{checkpoint.name}: win_rate={float(row['win_rate']):.3f}, "
+            f"capture={float(row['capture_rate']):.3f}, "
+            f"oob={float(row['out_of_bounds_rate']):.3f}, "
+            f"timeout={float(row['timeout_rate']):.3f}"
+        )
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = output_dir / "highlevel_win_rate.csv"
+    fieldnames = list(rows[0])
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    plot_path = output_dir / "highlevel_win_rate.png"
+    _write_plot(rows, plot_path)
+    print(f"Wrote {csv_path}")
+    print(f"Wrote {plot_path}")
+
+
+if __name__ == "__main__":
+    main()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 from pathlib import Path
 
 
@@ -38,6 +39,22 @@ def _moving_average(values: list[float], window: int) -> list[float]:
     return output
 
 
+def _read_progress_rows(path: Path) -> list[dict[str, float]]:
+    """Read SB3's step-indexed mean episode reward, when available."""
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows: list[dict[str, float]] = []
+        for row in csv.DictReader(handle):
+            step_text = row.get("time/total_timesteps", "")
+            reward_text = row.get("rollout/ep_rew_mean", "")
+            if not step_text or not reward_text:
+                continue
+            step = float(step_text)
+            reward = float(reward_text)
+            if math.isfinite(step) and math.isfinite(reward):
+                rows.append({"global_step": step, "episode_return": reward})
+        return rows
+
+
 def _write_plot_data(path: Path, rows: list[dict[str, float]], window: int) -> None:
     returns = [row["episode_return"] for row in rows]
     moving = _moving_average(returns, window)
@@ -58,22 +75,35 @@ def _write_plot_data(path: Path, rows: list[dict[str, float]], window: int) -> N
 
 
 def _plot_policy(policy_dir: Path, output_dir: Path, window: int, plt) -> tuple[str, list[dict[str, float]]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
     reward_path = policy_dir / "episode_rewards.csv"
-    rows = _read_rows(reward_path)
+    progress_path = policy_dir / "progress.csv"
+    episode_rows = _read_rows(reward_path)
+    progress_rows = _read_progress_rows(progress_path) if progress_path.exists() else []
+    rows = progress_rows or episode_rows
     if not rows:
         raise ValueError(f"episode_rewards.csv has no data rows: {reward_path}")
     policy_name = policy_dir.name
-    _write_plot_data(output_dir / f"{policy_name}_plot_data.csv", rows, window)
+    if progress_rows:
+        with (output_dir / f"{policy_name}_plot_data.csv").open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["global_step", "mean_episode_reward"])
+            writer.writeheader()
+            for row in progress_rows:
+                writer.writerow({"global_step": row["global_step"], "mean_episode_reward": row["episode_return"]})
+    else:
+        _write_plot_data(output_dir / f"{policy_name}_plot_data.csv", rows, window)
     steps = [row["global_step"] for row in rows]
     returns = [row["episode_return"] for row in rows]
-    moving = _moving_average(returns, window)
-    lengths = [row["episode_length"] for row in rows]
+    moving = returns if progress_rows else _moving_average(returns, window)
 
     fig, axis = plt.subplots(figsize=(8, 4.5))
-    axis.plot(steps, returns, alpha=0.28, linewidth=0.8, label="episode return")
-    axis.plot(steps, moving, linewidth=1.8, label=f"moving average ({window})")
+    if progress_rows:
+        axis.plot(steps, returns, linewidth=1.8, label="mean episode reward")
+    else:
+        axis.plot(steps, returns, alpha=0.28, linewidth=0.8, label="episode return")
+        axis.plot(steps, moving, linewidth=1.8, label=f"moving average ({window})")
     axis.set_xlabel("environment step")
-    axis.set_ylabel("episode reward")
+    axis.set_ylabel("mean episode reward" if progress_rows else "episode reward")
     axis.set_title(f"{policy_name}: training reward")
     axis.grid(alpha=0.25)
     axis.legend()
@@ -81,15 +111,20 @@ def _plot_policy(policy_dir: Path, output_dir: Path, window: int, plt) -> tuple[
     fig.savefig(output_dir / f"{policy_name}_reward_curve.png", dpi=180)
     plt.close(fig)
 
-    fig, axis = plt.subplots(figsize=(8, 4.5))
-    axis.plot(steps, lengths, linewidth=1.2)
-    axis.set_xlabel("environment step")
-    axis.set_ylabel("episode length")
-    axis.set_title(f"{policy_name}: episode length")
-    axis.grid(alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(output_dir / f"{policy_name}_episode_length.png", dpi=180)
-    plt.close(fig)
+    if episode_rows:
+        fig, axis = plt.subplots(figsize=(8, 4.5))
+        axis.plot(
+            [row["global_step"] for row in episode_rows],
+            [row["episode_length"] for row in episode_rows],
+            linewidth=1.2,
+        )
+        axis.set_xlabel("environment step")
+        axis.set_ylabel("episode length")
+        axis.set_title(f"{policy_name}: episode length")
+        axis.grid(alpha=0.25)
+        fig.tight_layout()
+        fig.savefig(output_dir / f"{policy_name}_episode_length.png", dpi=180)
+        plt.close(fig)
     return policy_name, rows
 
 

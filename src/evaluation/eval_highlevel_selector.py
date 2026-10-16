@@ -5,7 +5,13 @@ import random
 from collections import Counter
 from pathlib import Path
 
-from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, HighLevelOptionEnv
+from src.training.highlevel_env import (
+    CONTINUOUS_SCENARIO_SETS,
+    CONTINUOUS_SHOWCASE_SCENARIO,
+    SCRIPTED_SHOWCASE_SCENARIO,
+    STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS,
+    HighLevelOptionEnv,
+)
 
 
 def heuristic_option(
@@ -92,7 +98,7 @@ def main() -> None:
     parser.add_argument("--flank-threshold", type=float, default=0.65)
     parser.add_argument("--vertical-threshold", type=float, default=0.55)
     parser.add_argument("--rear-distance-threshold", type=float, default=0.09)
-    parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--episode-lowlevel-steps", type=int, default=None, help="structured mode defaults to 240; other modes default to 400")
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
@@ -106,7 +112,11 @@ def main() -> None:
     parser.add_argument("--structured-yaw-jitter", type=float, default=0.18)
     parser.add_argument("--structured-pitch-jitter", type=float, default=0.04)
     parser.add_argument("--structured-speed-jitter", type=float, default=0.5)
+    parser.add_argument("--structured-bound-scale", type=float, default=2.5)
+    parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
+    if args.episode_lowlevel_steps is None:
+        args.episode_lowlevel_steps = STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS if args.scenario_set == "structured_random_composite" else 400
     if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
 
@@ -151,6 +161,8 @@ def main() -> None:
         structured_yaw_jitter=args.structured_yaw_jitter,
         structured_pitch_jitter=args.structured_pitch_jitter,
         structured_speed_jitter=args.structured_speed_jitter,
+        structured_bound_scale=args.structured_bound_scale,
+        structured_z_bound_scale=args.structured_z_bound_scale,
     )
 
     high_model = None

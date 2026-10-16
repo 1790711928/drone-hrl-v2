@@ -159,6 +159,9 @@ CONTINUOUS_PURSUIT_SCENARIO = "continuous_pursuit"
 CONTINUOUS_SHOWCASE_SCENARIO = "continuous_showcase"
 SCRIPTED_SHOWCASE_SCENARIO = "scripted_showcase"
 STRUCTURED_RANDOM_COMPOSITE_SCENARIO = "structured_random_composite"
+STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS = 240
+STRUCTURED_DEFAULT_BOUND_SCALE = 2.5
+STRUCTURED_DEFAULT_Z_BOUND_SCALE = 1.5
 CONTINUOUS_SCENARIO_SETS = {
     CONTINUOUS_PURSUIT_SCENARIO,
     CONTINUOUS_SHOWCASE_SCENARIO,
@@ -230,6 +233,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         structured_yaw_jitter: float = 0.18,
         structured_pitch_jitter: float = 0.04,
         structured_speed_jitter: float = 0.5,
+        structured_bound_scale: float = STRUCTURED_DEFAULT_BOUND_SCALE,
+        structured_z_bound_scale: float = STRUCTURED_DEFAULT_Z_BOUND_SCALE,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -250,6 +255,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.structured_yaw_jitter = max(float(structured_yaw_jitter), 0.0)
         self.structured_pitch_jitter = max(float(structured_pitch_jitter), 0.0)
         self.structured_speed_jitter = max(float(structured_speed_jitter), 0.0)
+        self.structured_bound_scale = max(float(structured_bound_scale), 1.0)
+        self.structured_z_bound_scale = max(float(structured_z_bound_scale), 1.0)
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -307,6 +314,18 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             y_min=base.y_min * xy_scale,
             y_max=base.y_max * xy_scale,
             z_max=base.z_max * z_scale,
+        )
+
+    def _use_structured_bounds(self) -> None:
+        """Use the established expanded operating volume for long structured episodes."""
+        base = self._base_term_cfg
+        self.inner.inner.term_cfg = replace(
+            base,
+            x_min=base.x_min * self.structured_bound_scale,
+            x_max=base.x_max * self.structured_bound_scale,
+            y_min=base.y_min * self.structured_bound_scale,
+            y_max=base.y_max * self.structured_bound_scale,
+            z_max=base.z_max * self.structured_z_bound_scale,
         )
 
     def _is_continuous_set(self) -> bool:
@@ -692,6 +711,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
         if requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            self._use_structured_bounds()
             schedule_index = int(self.np_random.integers(len(STRUCTURED_COMPOSITE_SCHEDULES)))
             self.current_regime_schedule = tuple(STRUCTURED_COMPOSITE_SCHEDULES[schedule_index])
             start_state, template_name = self._structured_random_start_state()
@@ -707,7 +727,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             start_state = self._scripted_showcase_start_state()
         elif requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
             # The branch above has already prepared a randomized start state.
-            self._use_base_bounds()
+            pass
         else:
             self._use_base_bounds()
             start_state = CONTINUOUS_START_STATE

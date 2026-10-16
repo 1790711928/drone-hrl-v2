@@ -47,6 +47,9 @@ def test_structured_random_composite_jitter_is_configurable():
 def test_structured_random_composite_step_keeps_observation_schema():
     env = _make_env()
     obs, _ = env.reset(seed=4, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})
+    assert env.inner.inner.term_cfg.x_max == 125.0
+    assert env.inner.inner.term_cfg.y_max == 125.0
+    assert env.inner.inner.term_cfg.z_max == 75.0
     next_obs, _, terminated, truncated, info = env.step(0)
     assert obs.shape == env.observation_space.shape
     assert next_obs.shape == env.observation_space.shape

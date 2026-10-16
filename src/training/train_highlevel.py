@@ -56,7 +56,7 @@ def main() -> None:
         choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase", "structured_random_composite"],
         default="composite",
     )
-    parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--episode-lowlevel-steps", type=int, default=None, help="structured mode defaults to 240; other modes default to 400")
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
@@ -70,11 +70,18 @@ def main() -> None:
     parser.add_argument("--structured-yaw-jitter", type=float, default=0.18)
     parser.add_argument("--structured-pitch-jitter", type=float, default=0.04)
     parser.add_argument("--structured-speed-jitter", type=float, default=0.5)
+    parser.add_argument("--structured-bound-scale", type=float, default=2.5)
+    parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
     args = parser.parse_args()
     if args.timesteps <= 0:
         parser.error("--timesteps must be positive")
     if args.checkpoint_freq < 0:
         parser.error("--checkpoint-freq must be non-negative")
+    from src.training.highlevel_env import HighLevelOptionEnv, STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS
+
+    episode_lowlevel_steps = args.episode_lowlevel_steps
+    if episode_lowlevel_steps is None:
+        episode_lowlevel_steps = STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS if args.scenario_set == "structured_random_composite" else 400
 
     try:
         from stable_baselines3 import PPO, SAC
@@ -82,8 +89,6 @@ def main() -> None:
         from stable_baselines3.common.vec_env import DummyVecEnv
     except Exception as exc:
         raise RuntimeError("stable-baselines3, gymnasium, and tensorboard are required.") from exc
-
-    from src.training.highlevel_env import HighLevelOptionEnv
 
     low_paths = [Path(args.low_model_1), Path(args.low_model_2), Path(args.low_model_3), Path(args.low_model_4)]
     missing = [path for path in low_paths if not path.exists()]
@@ -114,7 +119,7 @@ def main() -> None:
             switch_penalty=args.switch_penalty,
             max_highlevel_steps=args.max_highlevel_steps,
             scenario_set=args.scenario_set,
-            episode_lowlevel_steps=args.episode_lowlevel_steps,
+            episode_lowlevel_steps=episode_lowlevel_steps,
             regime_duration=args.regime_duration,
             pursuer_speed_ratio=args.pursuer_speed_ratio,
             regime_schedule=args.regime_schedule,
@@ -128,6 +133,8 @@ def main() -> None:
             structured_yaw_jitter=args.structured_yaw_jitter,
             structured_pitch_jitter=args.structured_pitch_jitter,
             structured_speed_jitter=args.structured_speed_jitter,
+            structured_bound_scale=args.structured_bound_scale,
+            structured_z_bound_scale=args.structured_z_bound_scale,
         )
         return Monitor(base_env, filename=str(monitor_path))
 
@@ -146,7 +153,7 @@ def main() -> None:
         "option_duration": args.option_duration,
         "switch_penalty": args.switch_penalty,
         "scenario_set": args.scenario_set,
-        "episode_lowlevel_steps": args.episode_lowlevel_steps,
+        "episode_lowlevel_steps": episode_lowlevel_steps,
         "regime_duration": args.regime_duration,
         "pursuer_speed_ratio": args.pursuer_speed_ratio,
         "regime_schedule": args.regime_schedule,
@@ -155,6 +162,8 @@ def main() -> None:
         "structured_yaw_jitter": args.structured_yaw_jitter,
         "structured_pitch_jitter": args.structured_pitch_jitter,
         "structured_speed_jitter": args.structured_speed_jitter,
+        "structured_bound_scale": args.structured_bound_scale,
+        "structured_z_bound_scale": args.structured_z_bound_scale,
         "low_model_paths": [str(path.resolve()) for path in low_paths],
     }
     started_at = utc_now()

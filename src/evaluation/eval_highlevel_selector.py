@@ -83,7 +83,7 @@ def main() -> None:
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="composite")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase", "structured_random_composite"], default="composite")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
@@ -101,6 +101,11 @@ def main() -> None:
     parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
     parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
     parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
+    parser.add_argument("--structured-position-jitter", type=float, default=2.0)
+    parser.add_argument("--structured-relative-jitter", type=float, default=1.5)
+    parser.add_argument("--structured-yaw-jitter", type=float, default=0.18)
+    parser.add_argument("--structured-pitch-jitter", type=float, default=0.04)
+    parser.add_argument("--structured-speed-jitter", type=float, default=0.5)
     args = parser.parse_args()
     if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
@@ -141,6 +146,11 @@ def main() -> None:
         boundary_priority_exit=args.boundary_priority_exit,
         showcase_bound_scale=args.showcase_bound_scale,
         showcase_z_bound_scale=args.showcase_z_bound_scale,
+        structured_position_jitter=args.structured_position_jitter,
+        structured_relative_jitter=args.structured_relative_jitter,
+        structured_yaw_jitter=args.structured_yaw_jitter,
+        structured_pitch_jitter=args.structured_pitch_jitter,
+        structured_speed_jitter=args.structured_speed_jitter,
     )
 
     high_model = None

@@ -37,6 +37,10 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
     outcomes: list[str] = []
     rewards: list[float] = []
     lengths: list[int] = []
+    safe_horizon_successes: list[bool] = []
+    final_distances: list[float] = []
+    recent_distances: list[float] = []
+    recent_closing_speeds: list[float] = []
     env = HighLevelOptionEnv(low_models=low_models, **env_kwargs)
     try:
         for trial in range(episodes):
@@ -55,6 +59,16 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
             outcomes.append(str(info.get("outcome", "timeout")))
             rewards.append(total_reward)
             lengths.append(steps)
+            continuous_steps = int(info.get("continuous_lowlevel_steps", 0))
+            target_steps = int(env_kwargs.get("episode_lowlevel_steps", 0))
+            safe_horizon_successes.append(
+                str(info.get("outcome", "timeout")) == "escaped"
+                and target_steps > 0
+                and continuous_steps >= target_steps
+            )
+            final_distances.append(float(info.get("final_distance", 0.0)))
+            recent_distances.append(float(info.get("recent_distance", 0.0)))
+            recent_closing_speeds.append(float(info.get("recent_closing_speed", 0.0)))
     finally:
         env.close()
 
@@ -65,9 +79,13 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
         "capture_rate": sum(outcome == "captured" for outcome in outcomes) / denominator,
         "out_of_bounds_rate": sum(outcome == "out_of_bounds" for outcome in outcomes) / denominator,
         "timeout_rate": sum(outcome == "timeout" for outcome in outcomes) / denominator,
+        "safe_horizon_success_rate": sum(safe_horizon_successes) / denominator,
         "mean_reward": statistics.mean(rewards) if rewards else 0.0,
         "std_reward": statistics.pstdev(rewards) if len(rewards) > 1 else 0.0,
         "mean_episode_length": statistics.mean(lengths) if lengths else 0.0,
+        "mean_final_distance": statistics.mean(final_distances) if final_distances else 0.0,
+        "mean_recent_distance": statistics.mean(recent_distances) if recent_distances else 0.0,
+        "mean_recent_closing_speed": statistics.mean(recent_closing_speeds) if recent_closing_speeds else 0.0,
     }
 
 
@@ -125,16 +143,19 @@ def main() -> None:
     parser.add_argument("--structured-speed-jitter", type=float, default=0.5)
     parser.add_argument("--structured-bound-scale", type=float, default=2.5)
     parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
+    parser.add_argument("--success-window-lowlevel-steps", type=int, default=30)
     args = parser.parse_args()
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
     if args.max_checkpoint_step is not None and args.max_checkpoint_step <= 0:
         parser.error("--max-checkpoint-step must be positive")
+    if args.success_window_lowlevel_steps <= 0:
+        parser.error("--success-window-lowlevel-steps must be positive")
     from src.training.highlevel_env import STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS
 
     episode_lowlevel_steps = args.episode_lowlevel_steps
     if episode_lowlevel_steps is None:
-        episode_lowlevel_steps = 240 if args.scenario_set == "structured_random_composite" else 400
+        episode_lowlevel_steps = STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS if args.scenario_set == "structured_random_composite" else 400
 
     try:
         from stable_baselines3 import PPO, SAC
@@ -168,6 +189,7 @@ def main() -> None:
         "structured_speed_jitter": args.structured_speed_jitter,
         "structured_bound_scale": args.structured_bound_scale,
         "structured_z_bound_scale": args.structured_z_bound_scale,
+        "success_window_lowlevel_steps": args.success_window_lowlevel_steps,
     }
 
     rows: list[dict[str, float | int | str]] = []
@@ -180,7 +202,8 @@ def main() -> None:
             f"{checkpoint.name}: win_rate={float(row['win_rate']):.3f}, "
             f"capture={float(row['capture_rate']):.3f}, "
             f"oob={float(row['out_of_bounds_rate']):.3f}, "
-            f"timeout={float(row['timeout_rate']):.3f}"
+            f"timeout={float(row['timeout_rate']):.3f}, "
+            f"safe_horizon={float(row['safe_horizon_success_rate']):.3f}"
         )
 
     output_dir = Path(args.output_dir)

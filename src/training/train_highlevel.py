@@ -72,11 +72,14 @@ def main() -> None:
     parser.add_argument("--structured-speed-jitter", type=float, default=0.5)
     parser.add_argument("--structured-bound-scale", type=float, default=2.5)
     parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
+    parser.add_argument("--success-window-lowlevel-steps", type=int, default=30)
     args = parser.parse_args()
     if args.timesteps <= 0:
         parser.error("--timesteps must be positive")
     if args.checkpoint_freq < 0:
         parser.error("--checkpoint-freq must be non-negative")
+    if args.success_window_lowlevel_steps <= 0:
+        parser.error("--success-window-lowlevel-steps must be positive")
     from src.training.highlevel_env import HighLevelOptionEnv, STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS
 
     episode_lowlevel_steps = args.episode_lowlevel_steps
@@ -135,6 +138,7 @@ def main() -> None:
             structured_speed_jitter=args.structured_speed_jitter,
             structured_bound_scale=args.structured_bound_scale,
             structured_z_bound_scale=args.structured_z_bound_scale,
+            success_window_lowlevel_steps=args.success_window_lowlevel_steps,
         )
         return Monitor(base_env, filename=str(monitor_path))
 
@@ -164,6 +168,7 @@ def main() -> None:
         "structured_speed_jitter": args.structured_speed_jitter,
         "structured_bound_scale": args.structured_bound_scale,
         "structured_z_bound_scale": args.structured_z_bound_scale,
+        "success_window_lowlevel_steps": args.success_window_lowlevel_steps,
         "low_model_paths": [str(path.resolve()) for path in low_paths],
     }
     started_at = utc_now()

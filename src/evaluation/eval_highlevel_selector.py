@@ -114,7 +114,10 @@ def main() -> None:
     parser.add_argument("--structured-speed-jitter", type=float, default=0.5)
     parser.add_argument("--structured-bound-scale", type=float, default=2.5)
     parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
+    parser.add_argument("--success-window-lowlevel-steps", type=int, default=30)
     args = parser.parse_args()
+    if args.success_window_lowlevel_steps <= 0:
+        parser.error("--success-window-lowlevel-steps must be positive")
     if args.episode_lowlevel_steps is None:
         args.episode_lowlevel_steps = STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS if args.scenario_set == "structured_random_composite" else 400
     if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
@@ -163,6 +166,7 @@ def main() -> None:
         structured_speed_jitter=args.structured_speed_jitter,
         structured_bound_scale=args.structured_bound_scale,
         structured_z_bound_scale=args.structured_z_bound_scale,
+        success_window_lowlevel_steps=args.success_window_lowlevel_steps,
     )
 
     high_model = None

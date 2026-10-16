@@ -162,6 +162,7 @@ STRUCTURED_RANDOM_COMPOSITE_SCENARIO = "structured_random_composite"
 STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS = 240
 STRUCTURED_DEFAULT_BOUND_SCALE = 2.5
 STRUCTURED_DEFAULT_Z_BOUND_SCALE = 1.5
+DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS = 30
 CONTINUOUS_SCENARIO_SETS = {
     CONTINUOUS_PURSUIT_SCENARIO,
     CONTINUOUS_SHOWCASE_SCENARIO,
@@ -235,6 +236,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         structured_speed_jitter: float = 0.5,
         structured_bound_scale: float = STRUCTURED_DEFAULT_BOUND_SCALE,
         structured_z_bound_scale: float = STRUCTURED_DEFAULT_Z_BOUND_SCALE,
+        success_window_lowlevel_steps: int = DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -257,6 +259,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.structured_speed_jitter = max(float(structured_speed_jitter), 0.0)
         self.structured_bound_scale = max(float(structured_bound_scale), 1.0)
         self.structured_z_bound_scale = max(float(structured_z_bound_scale), 1.0)
+        self.success_window_lowlevel_steps = max(int(success_window_lowlevel_steps), 1)
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -748,7 +751,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         }
 
     def _continuous_recent_metrics(self) -> tuple[float, float]:
-        window = max(1, min(len(self.continuous_recent_distances), 30))
+        window = max(1, min(len(self.continuous_recent_distances), self.success_window_lowlevel_steps))
         if window == 0:
             return 0.0, 0.0
         recent_distance = float(sum(self.continuous_recent_distances[-window:]) / window)
@@ -766,6 +769,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "regime_schedule": ",".join(self.current_regime_schedule),
             "continuous_lowlevel_steps": self.continuous_lowlevel_steps,
             "episode_lowlevel_steps": self.episode_lowlevel_steps,
+            "success_window_lowlevel_steps": self.success_window_lowlevel_steps,
             "final_distance": final_distance,
             "recent_distance": recent_distance,
             "recent_closing_speed": recent_closing,

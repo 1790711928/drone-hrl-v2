@@ -55,3 +55,13 @@ def test_structured_random_composite_step_keeps_observation_schema():
     assert next_obs.shape == env.observation_space.shape
     assert info["scenario_set"] == STRUCTURED_RANDOM_COMPOSITE_SCENARIO
     assert not (terminated and truncated)
+
+
+def test_success_window_is_configurable_and_uses_recent_metrics():
+    env = _make_env(success_window_lowlevel_steps=2)
+    env.continuous_recent_distances = [10.0, 30.0, 30.0]
+    env.continuous_recent_closing_speeds = [0.5, 0.0, 0.0]
+    assert env._continuous_success()
+
+    env.success_window_lowlevel_steps = 3
+    assert not env._continuous_success()

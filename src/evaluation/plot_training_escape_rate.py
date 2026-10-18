@@ -13,6 +13,24 @@ from collections import deque
 from pathlib import Path
 
 
+def _piecewise_display_step(step: int, total_step: int) -> float:
+    """Map actual steps to a three-segment display axis."""
+    total_step = max(int(total_step), 1)
+    first_end = min(10_000, total_step)
+    second_end = min(20_000, total_step)
+    weights = (1.0 / 3.0, 1.0 / 4.0, 1.0 / 5.0)
+    weight_sum = sum(weights)
+    widths = tuple(weight / weight_sum for weight in weights)
+    if step <= first_end:
+        fraction = step / max(first_end, 1)
+        return total_step * widths[0] * fraction
+    if step <= second_end:
+        fraction = (step - first_end) / max(second_end - first_end, 1)
+        return total_step * (widths[0] + widths[1] * fraction)
+    fraction = (step - second_end) / max(total_step - second_end, 1)
+    return total_step * (widths[0] + widths[1] + widths[2] * fraction)
+
+
 def _read_escape_rows(path: Path, window: int, mode: str = "rolling") -> list[dict[str, float | int]]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -68,6 +86,11 @@ def main() -> None:
         default=None,
         help="Show the first N steps in the main axes and the full run in an inset.",
     )
+    parser.add_argument(
+        "--piecewise-axis",
+        action="store_true",
+        help="Use the three-segment visual x-axis: 0-10k, 10k-20k, 20k-end.",
+    )
     args = parser.parse_args()
     if args.window <= 0:
         parser.error("--window must be positive")
@@ -97,8 +120,16 @@ def main() -> None:
         focus_rows = [row for row in rows if int(row["global_step"]) <= args.focus_steps]
         if len(focus_rows) < 2:
             raise ValueError("--focus-steps must include at least two recorded points")
+    if args.focus_steps is not None and args.piecewise_axis:
+        parser.error("--focus-steps and --piecewise-axis cannot be combined")
+    total_step = max(int(row["global_step"]) for row in rows)
+
+    def x_value(row: dict[str, float | int]) -> float:
+        step = int(row["global_step"])
+        return _piecewise_display_step(step, total_step) if args.piecewise_axis else float(step)
+
     axis.plot(
-        [row["global_step"] for row in focus_rows],
+        [x_value(row) for row in focus_rows],
         [100.0 * float(row["escape_rate"]) for row in focus_rows],
         linewidth=1.4,
         label="escape rate",
@@ -108,6 +139,8 @@ def main() -> None:
     axis.set_xlim(left=0)
     if args.focus_steps is not None:
         axis.set_xlim(0, args.focus_steps)
+    elif args.piecewise_axis:
+        axis.set_xlim(0, total_step)
     axis.set_ylim(0, 100)
     axis.grid(alpha=0.25)
     axis.legend(loc="lower right")
@@ -115,11 +148,12 @@ def main() -> None:
     final_row = rows[-1]
     final_step = int(final_row["global_step"])
     final_rate = 100.0 * float(final_row["escape_rate"])
+    final_display_step = x_value(final_row)
     if args.focus_steps is None:
-        axis.scatter([final_step], [final_rate], zorder=3)
+        axis.scatter([final_display_step], [final_rate], zorder=3)
         axis.annotate(
             f"x={final_step}\ny={final_rate:.1f}%",
-            xy=(final_step, final_rate),
+            xy=(final_display_step, final_rate),
             xytext=(-70, 15),
             textcoords="offset points",
             bbox={"boxstyle": "round,pad=0.3", "fc": "white", "alpha": 0.85},
@@ -144,6 +178,10 @@ def main() -> None:
         inset.set_ylim(0, 100)
         inset.grid(alpha=0.2)
         inset.tick_params(labelsize=7)
+    if args.piecewise_axis:
+        tick_steps = [step for step in (0, 5_000, 10_000, 15_000, 20_000, 30_000, 40_000, 50_000) if step <= total_step]
+        axis.set_xticks([_piecewise_display_step(step, total_step) for step in tick_steps])
+        axis.set_xticklabels([str(step) for step in tick_steps])
     figure.tight_layout()
     image_path = output_dir / "training_escape_rate.png"
     figure.savefig(image_path, dpi=180)

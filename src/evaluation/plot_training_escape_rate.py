@@ -71,6 +71,7 @@ def main() -> None:
     )
     axis.set_xlabel("step")
     axis.set_ylabel("escape rate (%)")
+    axis.set_xlim(left=0)
     axis.set_ylim(0, 100)
     axis.grid(alpha=0.25)
     axis.legend(loc="lower right")

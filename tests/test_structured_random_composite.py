@@ -46,6 +46,14 @@ def test_structured_random_composite_jitter_is_configurable():
     assert env.inner.inner.state is not None
 
 
+def test_structured_four_phase_only_excludes_three_phase_schedules():
+    env = _make_env(structured_four_phase_only=True)
+    for seed in range(12):
+        _, info = env.reset(seed=seed, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})
+        assert info["structured_total_phases"] == 4
+        assert len(env.current_regime_schedule) == 4
+
+
 def test_structured_random_composite_step_keeps_observation_schema():
     env = _make_env()
     obs, _ = env.reset(seed=4, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})

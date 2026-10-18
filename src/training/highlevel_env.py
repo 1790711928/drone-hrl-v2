@@ -239,6 +239,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         structured_z_bound_scale: float = STRUCTURED_DEFAULT_Z_BOUND_SCALE,
         success_window_lowlevel_steps: int = DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS,
         structured_escape_streak: int = STRUCTURED_DEFAULT_ESCAPE_STREAK,
+        structured_four_phase_only: bool = False,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -263,6 +264,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.structured_z_bound_scale = max(float(structured_z_bound_scale), 1.0)
         self.success_window_lowlevel_steps = max(int(success_window_lowlevel_steps), 1)
         self.structured_escape_streak = max(int(structured_escape_streak), 1)
+        self.structured_four_phase_only = bool(structured_four_phase_only)
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -752,8 +754,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 self.inner.inner.term_cfg,
                 k_escape=self.structured_escape_streak,
             )
-            schedule_index = int(self.np_random.integers(len(STRUCTURED_COMPOSITE_SCHEDULES)))
-            self.current_regime_schedule = tuple(STRUCTURED_COMPOSITE_SCHEDULES[schedule_index])
+            schedules = STRUCTURED_COMPOSITE_SCHEDULES
+            if self.structured_four_phase_only:
+                schedules = tuple(schedule for schedule in schedules if len(schedule) == 4)
+            schedule_index = int(self.np_random.integers(len(schedules)))
+            self.current_regime_schedule = tuple(schedules[schedule_index])
             start_state, template_name = self._structured_random_start_state()
             scenario_name = f"{requested_scenario}:{template_name}"
         else:

@@ -155,6 +155,11 @@ def main() -> None:
     parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
     parser.add_argument("--success-window-lowlevel-steps", type=int, default=30)
     parser.add_argument("--structured-escape-streak", type=int, default=8)
+    parser.add_argument(
+        "--structured-four-phase-only",
+        action="store_true",
+        help="For structured evaluation, sample only the four-phase schedules.",
+    )
     args = parser.parse_args()
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
@@ -204,6 +209,7 @@ def main() -> None:
         "structured_z_bound_scale": args.structured_z_bound_scale,
         "success_window_lowlevel_steps": args.success_window_lowlevel_steps,
         "structured_escape_streak": args.structured_escape_streak,
+        "structured_four_phase_only": args.structured_four_phase_only,
     }
 
     rows: list[dict[str, float | int | str]] = []

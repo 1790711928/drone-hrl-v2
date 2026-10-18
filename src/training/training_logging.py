@@ -78,6 +78,9 @@ class EpisodeRewardCallback(BaseCallback):
         "global_step",
         "episode_return",
         "episode_length",
+        "outcome",
+        "escaped",
+        "early_safe_escape",
         "policy_name",
         "seed",
         "elapsed_time",
@@ -114,6 +117,7 @@ class EpisodeRewardCallback(BaseCallback):
                 continue
             episode_return = float(episode["r"])
             episode_length = int(episode["l"])
+            outcome = str(info.get("outcome", "")) if isinstance(info, dict) else ""
             if not math.isfinite(episode_return):
                 self.nan_or_inf = True
             self.episode_count += 1
@@ -123,6 +127,11 @@ class EpisodeRewardCallback(BaseCallback):
                     "global_step": int(self.num_timesteps),
                     "episode_return": episode_return,
                     "episode_length": episode_length,
+                    "outcome": outcome,
+                    "escaped": int(outcome == "escaped"),
+                    "early_safe_escape": int(bool(info.get("early_safe_escape", False)))
+                    if isinstance(info, dict)
+                    else 0,
                     "policy_name": self.policy_name,
                     "seed": self.seed,
                     "elapsed_time": time.monotonic() - self.started_at,

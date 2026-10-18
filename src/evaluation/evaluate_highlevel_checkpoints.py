@@ -38,6 +38,7 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
     rewards: list[float] = []
     lengths: list[int] = []
     safe_horizon_successes: list[bool] = []
+    early_safe_escapes: list[bool] = []
     final_distances: list[float] = []
     recent_distances: list[float] = []
     recent_closing_speeds: list[float] = []
@@ -66,6 +67,7 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
                 and target_steps > 0
                 and continuous_steps >= target_steps
             )
+            early_safe_escapes.append(bool(info.get("early_safe_escape", False)))
             final_distances.append(float(info.get("final_distance", 0.0)))
             recent_distances.append(float(info.get("recent_distance", 0.0)))
             recent_closing_speeds.append(float(info.get("recent_closing_speed", 0.0)))
@@ -80,6 +82,7 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
         "out_of_bounds_rate": sum(outcome == "out_of_bounds" for outcome in outcomes) / denominator,
         "timeout_rate": sum(outcome == "timeout" for outcome in outcomes) / denominator,
         "safe_horizon_success_rate": sum(safe_horizon_successes) / denominator,
+        "early_safe_escape_rate": sum(early_safe_escapes) / denominator,
         "mean_reward": statistics.mean(rewards) if rewards else 0.0,
         "std_reward": statistics.pstdev(rewards) if len(rewards) > 1 else 0.0,
         "mean_episode_length": statistics.mean(lengths) if lengths else 0.0,
@@ -203,7 +206,8 @@ def main() -> None:
             f"capture={float(row['capture_rate']):.3f}, "
             f"oob={float(row['out_of_bounds_rate']):.3f}, "
             f"timeout={float(row['timeout_rate']):.3f}, "
-            f"safe_horizon={float(row['safe_horizon_success_rate']):.3f}"
+            f"safe_horizon={float(row['safe_horizon_success_rate']):.3f}, "
+            f"early_safe_escape={float(row['early_safe_escape_rate']):.3f}"
         )
 
     output_dir = Path(args.output_dir)

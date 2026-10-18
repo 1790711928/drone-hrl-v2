@@ -1,5 +1,7 @@
 import numpy as np
 
+import src.training.highlevel_env as highlevel_env
+from src.env.termination import EpisodeOutcome
 from src.training.highlevel_env import HighLevelOptionEnv, STRUCTURED_RANDOM_COMPOSITE_SCENARIO
 
 
@@ -65,3 +67,15 @@ def test_success_window_is_configurable_and_uses_recent_metrics():
 
     env.success_window_lowlevel_steps = 3
     assert not env._continuous_success()
+
+
+def test_structured_escape_stops_episode_on_existing_escape_streak(monkeypatch):
+    env = _make_env()
+    env.reset(seed=5, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})
+    monkeypatch.setattr(highlevel_env, "evaluate_termination", lambda **_: EpisodeOutcome.ESCAPED)
+
+    _, _, terminated, truncated, info = env._continuous_lowlevel_step(np.zeros(3, dtype=np.float32), "rear")
+
+    assert terminated
+    assert not truncated
+    assert info["outcome"] == "escaped"

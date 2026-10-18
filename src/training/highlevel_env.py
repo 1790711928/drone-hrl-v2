@@ -835,12 +835,13 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         )
         reward_outcome = outcome
         if outcome == EpisodeOutcome.ESCAPED:
-            # In continuous_pursuit, base-env escape is a useful signal but not
-            # an episode/phase completion event. Keep the state continuous and
-            # avoid repeatedly collecting the low-level terminal bonus before
-            # the long-horizon success check.
-            reward_outcome = EpisodeOutcome.RUNNING
-            env.tstate = TerminationState()
+            if self.scenario_set != STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+                # In the legacy continuous modes, base-env escape is a useful
+                # signal but not an episode/phase completion event. Keep the
+                # state continuous and avoid repeatedly collecting the terminal
+                # bonus before their long-horizon success check.
+                reward_outcome = EpisodeOutcome.RUNNING
+                env.tstate = TerminationState()
         reward = compute_reward(
             scenario="rear_close_threat",
             prev_distance=prev_distance,
@@ -854,14 +855,22 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         )
         obs_dict = env._observation(closing_speed=closing_speed)
         obs = self.inner._flatten_obs(obs_dict)
+        reported_outcome = outcome.value
+        if outcome == EpisodeOutcome.ESCAPED and self.scenario_set != STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            reported_outcome = EpisodeOutcome.RUNNING.value
         info = {
-            "outcome": outcome.value if outcome != EpisodeOutcome.ESCAPED else EpisodeOutcome.RUNNING.value,
+            "outcome": reported_outcome,
             "distance": cur_distance,
             "closing_speed": closing_speed,
             "capture_streak": env.tstate.capture_streak,
             "escape_streak": env.tstate.escape_streak,
         }
         terminated = outcome in {EpisodeOutcome.CAPTURED, EpisodeOutcome.OUT_OF_BOUNDS}
+        if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO and outcome == EpisodeOutcome.ESCAPED:
+            # Structured episodes represent an escape task. Once the existing
+            # k_escape streak is satisfied, stop before unnecessary flight can
+            # turn a successful separation into an out-of-bounds failure.
+            terminated = True
         return obs, float(reward), terminated, False, info
 
     def _continuous_success(self) -> bool:
@@ -907,6 +916,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 break
 
         outcome = str(info.get("outcome", "running"))
+        early_safe_escape = (
+            self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO
+            and outcome == EpisodeOutcome.ESCAPED.value
+            and self.continuous_lowlevel_steps < self.episode_lowlevel_steps
+        )
         if not terminated and self.continuous_lowlevel_steps >= self.episode_lowlevel_steps:
             if self._continuous_success():
                 outcome = "escaped"
@@ -934,6 +948,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "phase_success": False,
             "completed_phases": 0,
             "total_phases": 0,
+            "early_safe_escape": bool(early_safe_escape),
         })
         return obs, float(total_reward), bool(terminated), bool(truncated), info
 

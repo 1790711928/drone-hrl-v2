@@ -31,7 +31,9 @@ def _collect_checkpoints(checkpoint_dir: Path, pattern: str, max_step: int | Non
     return paths
 
 
-def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwargs: dict) -> dict[str, float | int | str]:
+def _evaluate_checkpoint(
+    model, low_models, *, episodes: int, seed: int, env_kwargs: dict
+) -> tuple[dict[str, float | int | str], list[dict[str, float | int | str]]]:
     from src.training.highlevel_env import HighLevelOptionEnv
 
     outcomes: list[str] = []
@@ -44,6 +46,7 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
     recent_closing_speeds: list[float] = []
     completed_phase_counts: list[float] = []
     total_phase_counts: list[float] = []
+    raw_rows: list[dict[str, float | int | str]] = []
     env = HighLevelOptionEnv(low_models=low_models, **env_kwargs)
     try:
         for trial in range(episodes):
@@ -75,6 +78,22 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
             recent_closing_speeds.append(float(info.get("recent_closing_speed", 0.0)))
             completed_phase_counts.append(float(info.get("structured_completed_phases", 0.0)))
             total_phase_counts.append(float(info.get("structured_total_phases", 0.0)))
+            raw_rows.append(
+                {
+                    "trial": trial,
+                    "seed": episode_seed,
+                    "outcome": str(info.get("outcome", "timeout")),
+                    "escaped": int(str(info.get("outcome", "timeout")) == "escaped"),
+                    "early_safe_escape": int(bool(info.get("early_safe_escape", False))),
+                    "total_reward": total_reward,
+                    "episode_length": steps,
+                    "final_distance": float(info.get("final_distance", 0.0)),
+                    "recent_distance": float(info.get("recent_distance", 0.0)),
+                    "recent_closing_speed": float(info.get("recent_closing_speed", 0.0)),
+                    "structured_completed_phases": float(info.get("structured_completed_phases", 0.0)),
+                    "structured_total_phases": float(info.get("structured_total_phases", 0.0)),
+                }
+            )
     finally:
         env.close()
 
@@ -96,7 +115,7 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
         "mean_recent_closing_speed": statistics.mean(recent_closing_speeds) if recent_closing_speeds else 0.0,
         "mean_structured_completed_phases": statistics.mean(completed_phase_counts) if completed_phase_counts else 0.0,
         "mean_structured_total_phases": statistics.mean(total_phase_counts) if total_phase_counts else 0.0,
-    }
+    }, raw_rows
 
 
 def _write_plot(rows: list[dict[str, float | int | str]], output_path: Path) -> None:
@@ -224,9 +243,14 @@ def main() -> None:
     }
 
     rows: list[dict[str, float | int | str]] = []
+    raw_rows: list[dict[str, float | int | str]] = []
     for checkpoint in checkpoints:
         model = PPO.load(str(checkpoint), device=args.device)
-        result = _evaluate_checkpoint(model, low_models, episodes=args.episodes, seed=args.seed, env_kwargs=env_kwargs)
+        result, checkpoint_raw_rows = _evaluate_checkpoint(
+            model, low_models, episodes=args.episodes, seed=args.seed, env_kwargs=env_kwargs
+        )
+        for raw_row in checkpoint_raw_rows:
+            raw_rows.append({"checkpoint": checkpoint.name, "checkpoint_step": _checkpoint_step(checkpoint), **raw_row})
         row = {"checkpoint": checkpoint.name, "checkpoint_step": _checkpoint_step(checkpoint), **result}
         rows.append(row)
         print(
@@ -246,9 +270,16 @@ def main() -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    raw_csv_path = output_dir / "highlevel_episode_raw.csv"
+    raw_fieldnames = list(raw_rows[0]) if raw_rows else ["checkpoint", "checkpoint_step"]
+    with raw_csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=raw_fieldnames)
+        writer.writeheader()
+        writer.writerows(raw_rows)
     plot_path = output_dir / "highlevel_win_rate.png"
     _write_plot(rows, plot_path)
     print(f"Wrote {csv_path}")
+    print(f"Wrote {raw_csv_path}")
     print(f"Wrote {plot_path}")
 
 

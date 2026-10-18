@@ -13,7 +13,7 @@ from collections import deque
 from pathlib import Path
 
 
-def _read_escape_rows(path: Path, window: int) -> list[dict[str, float | int]]:
+def _read_escape_rows(path: Path, window: int, mode: str = "rolling") -> list[dict[str, float | int]]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         fields = set(reader.fieldnames or [])
@@ -23,16 +23,36 @@ def _read_escape_rows(path: Path, window: int) -> list[dict[str, float | int]]:
             )
         history: deque[int] = deque(maxlen=window)
         output: list[dict[str, float | int]] = []
+        total_episodes = 0
+        total_escaped = 0
         for row in reader:
-            history.append(int(float(row["escaped"])))
+            escaped = int(float(row["escaped"]))
+            total_episodes += 1
+            total_escaped += escaped
+            history.append(escaped)
+            escape_rate = (
+                total_escaped / total_episodes
+                if mode == "cumulative"
+                else sum(history) / len(history)
+            )
             output.append(
                 {
                     "global_step": int(float(row["global_step"])),
                     "episode_index": int(float(row.get("episode_index", len(output) + 1))),
-                    "window_episodes": len(history),
-                    "escape_rate": sum(history) / len(history),
+                    "window_episodes": total_episodes if mode == "cumulative" else len(history),
+                    "escape_rate": escape_rate,
                 }
             )
+    if mode == "cumulative":
+        output.insert(
+            0,
+            {
+                "global_step": 0,
+                "episode_index": 0,
+                "window_episodes": 0,
+                "escape_rate": 0.0,
+            },
+        )
     return output
 
 
@@ -41,11 +61,12 @@ def main() -> None:
     parser.add_argument("--input-csv", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--window", type=int, default=20)
+    parser.add_argument("--mode", choices=("rolling", "cumulative"), default="rolling")
     args = parser.parse_args()
     if args.window <= 0:
         parser.error("--window must be positive")
 
-    rows = _read_escape_rows(Path(args.input_csv), args.window)
+    rows = _read_escape_rows(Path(args.input_csv), args.window, args.mode)
     if not rows:
         raise ValueError("input CSV contains no episode rows")
     output_dir = Path(args.output_dir)

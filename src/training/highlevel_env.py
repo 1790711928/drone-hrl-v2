@@ -883,6 +883,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                     next_phase = self.current_regime_schedule[self.structured_phase_index]
                     env.state = self._structured_phase_threat_state(evader_next, next_phase)
                     env.tstate = TerminationState()
+                    self.continuous_active_regime = next_phase
+                    self.continuous_last_regime_switch_step = self.continuous_lowlevel_steps
                     pursuer_next = env.state.pursuer
                     reward_outcome = EpisodeOutcome.RUNNING
                     outcome = EpisodeOutcome.RUNNING

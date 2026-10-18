@@ -13,12 +13,17 @@ from collections import deque
 from pathlib import Path
 
 
-def _piecewise_display_step(step: int, total_step: int, focus_end: int | None = None) -> float:
+def _piecewise_display_step(
+    step: int,
+    total_step: int,
+    focus_end: int | None = None,
+    focus_width: float = 1.0 / 3.0,
+) -> float:
     """Map actual steps to a three-segment display axis."""
     total_step = max(int(total_step), 1)
     if focus_end is not None:
         focus_end = min(max(int(focus_end), 1), total_step)
-        first_width = 1.0 / 3.0
+        first_width = min(max(float(focus_width), 0.01), 0.99)
         if step <= focus_end:
             return total_step * first_width * step / focus_end
         tail_fraction = (step - focus_end) / max(total_step - focus_end, 1)
@@ -105,6 +110,18 @@ def main() -> None:
         default=None,
         help="Use a two-segment piecewise axis with the first segment ending at this step.",
     )
+    parser.add_argument(
+        "--piecewise-focus-width",
+        type=float,
+        default=1.0 / 3.0,
+        help="Fraction of display width assigned to the focused first segment.",
+    )
+    parser.add_argument(
+        "--display-end-step",
+        type=int,
+        default=None,
+        help="Clamp the display axis and final annotation to this actual step.",
+    )
     args = parser.parse_args()
     if args.window <= 0:
         parser.error("--window must be positive")
@@ -139,11 +156,17 @@ def main() -> None:
     if args.piecewise_focus_end is not None and not args.piecewise_axis:
         parser.error("--piecewise-focus-end requires --piecewise-axis")
     total_step = max(int(row["global_step"]) for row in rows)
+    if args.display_end_step is not None:
+        if args.display_end_step <= 0:
+            parser.error("--display-end-step must be positive")
+        total_step = min(total_step, args.display_end_step)
+    if args.piecewise_focus_width <= 0 or args.piecewise_focus_width >= 1:
+        parser.error("--piecewise-focus-width must be between 0 and 1")
 
     def x_value(row: dict[str, float | int]) -> float:
-        step = int(row["global_step"])
+        step = min(int(row["global_step"]), total_step)
         return (
-            _piecewise_display_step(step, total_step, args.piecewise_focus_end)
+            _piecewise_display_step(step, total_step, args.piecewise_focus_end, args.piecewise_focus_width)
             if args.piecewise_axis
             else float(step)
         )
@@ -166,7 +189,7 @@ def main() -> None:
     axis.legend(loc="lower right")
 
     final_row = rows[-1]
-    final_step = int(final_row["global_step"])
+    final_step = args.display_end_step if args.display_end_step is not None else int(final_row["global_step"])
     final_rate = 100.0 * float(final_row["escape_rate"])
     final_display_step = x_value(final_row)
     if args.focus_steps is None:
@@ -201,12 +224,26 @@ def main() -> None:
     if args.piecewise_axis:
         if args.piecewise_focus_end is not None:
             tick_steps = [step for step in (0, 1_000, 2_000, args.piecewise_focus_end, 10_000, 20_000, 30_000, 40_000, 50_000) if step <= total_step]
-            boundary_display = _piecewise_display_step(args.piecewise_focus_end, total_step, args.piecewise_focus_end)
-            axis.axvline(boundary_display, color="0.45", linewidth=0.8, linestyle="--", alpha=0.6)
+            boundary_display = _piecewise_display_step(
+                args.piecewise_focus_end,
+                total_step,
+                args.piecewise_focus_end,
+                args.piecewise_focus_width,
+            )
         else:
             tick_steps = [step for step in (0, 5_000, 10_000, 15_000, 20_000, 30_000, 40_000, 50_000) if step <= total_step]
-        axis.set_xticks([_piecewise_display_step(step, total_step, args.piecewise_focus_end) for step in tick_steps])
+        if args.piecewise_focus_end is not None:
+            tick_steps = [
+                step
+                for step in (0, 1_000, 2_000, 3_000, 4_000, args.piecewise_focus_end, 10_000, 20_000, 30_000, 40_000, 50_000)
+                if step <= total_step
+            ]
+        axis.set_xticks([
+            _piecewise_display_step(step, total_step, args.piecewise_focus_end, args.piecewise_focus_width)
+            for step in tick_steps
+        ])
         axis.set_xticklabels([str(step) for step in tick_steps])
+    axis.margins(x=0, y=0)
     figure.tight_layout()
     image_path = output_dir / "training_escape_rate.png"
     figure.savefig(image_path, dpi=180)

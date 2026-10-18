@@ -77,6 +77,7 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
     denominator = max(len(outcomes), 1)
     return {
         "episodes": len(outcomes),
+        "escape_streak_required": int(env_kwargs.get("structured_escape_streak", 0)),
         "win_rate": sum(outcome == "escaped" for outcome in outcomes) / denominator,
         "capture_rate": sum(outcome == "captured" for outcome in outcomes) / denominator,
         "out_of_bounds_rate": sum(outcome == "out_of_bounds" for outcome in outcomes) / denominator,
@@ -147,6 +148,7 @@ def main() -> None:
     parser.add_argument("--structured-bound-scale", type=float, default=2.5)
     parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
     parser.add_argument("--success-window-lowlevel-steps", type=int, default=30)
+    parser.add_argument("--structured-escape-streak", type=int, default=8)
     args = parser.parse_args()
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
@@ -154,6 +156,8 @@ def main() -> None:
         parser.error("--max-checkpoint-step must be positive")
     if args.success_window_lowlevel_steps <= 0:
         parser.error("--success-window-lowlevel-steps must be positive")
+    if args.structured_escape_streak <= 0:
+        parser.error("--structured-escape-streak must be positive")
     from src.training.highlevel_env import STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS
 
     episode_lowlevel_steps = args.episode_lowlevel_steps
@@ -193,6 +197,7 @@ def main() -> None:
         "structured_bound_scale": args.structured_bound_scale,
         "structured_z_bound_scale": args.structured_z_bound_scale,
         "success_window_lowlevel_steps": args.success_window_lowlevel_steps,
+        "structured_escape_streak": args.structured_escape_streak,
     }
 
     rows: list[dict[str, float | int | str]] = []

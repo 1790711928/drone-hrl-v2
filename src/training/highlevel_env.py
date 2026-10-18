@@ -163,6 +163,7 @@ STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS = 240
 STRUCTURED_DEFAULT_BOUND_SCALE = 2.5
 STRUCTURED_DEFAULT_Z_BOUND_SCALE = 1.5
 DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS = 30
+STRUCTURED_DEFAULT_ESCAPE_STREAK = 8
 CONTINUOUS_SCENARIO_SETS = {
     CONTINUOUS_PURSUIT_SCENARIO,
     CONTINUOUS_SHOWCASE_SCENARIO,
@@ -237,6 +238,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         structured_bound_scale: float = STRUCTURED_DEFAULT_BOUND_SCALE,
         structured_z_bound_scale: float = STRUCTURED_DEFAULT_Z_BOUND_SCALE,
         success_window_lowlevel_steps: int = DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS,
+        structured_escape_streak: int = STRUCTURED_DEFAULT_ESCAPE_STREAK,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -260,6 +262,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.structured_bound_scale = max(float(structured_bound_scale), 1.0)
         self.structured_z_bound_scale = max(float(structured_z_bound_scale), 1.0)
         self.success_window_lowlevel_steps = max(int(success_window_lowlevel_steps), 1)
+        self.structured_escape_streak = max(int(structured_escape_streak), 1)
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -715,6 +718,10 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_last_regime_info = {}
         if requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
             self._use_structured_bounds()
+            self.inner.inner.term_cfg = replace(
+                self.inner.inner.term_cfg,
+                k_escape=self.structured_escape_streak,
+            )
             schedule_index = int(self.np_random.integers(len(STRUCTURED_COMPOSITE_SCHEDULES)))
             self.current_regime_schedule = tuple(STRUCTURED_COMPOSITE_SCHEDULES[schedule_index])
             start_state, template_name = self._structured_random_start_state()
@@ -770,6 +777,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "continuous_lowlevel_steps": self.continuous_lowlevel_steps,
             "episode_lowlevel_steps": self.episode_lowlevel_steps,
             "success_window_lowlevel_steps": self.success_window_lowlevel_steps,
+            "escape_streak_required": self.structured_escape_streak if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else self._base_term_cfg.k_escape,
             "final_distance": final_distance,
             "recent_distance": recent_distance,
             "recent_closing_speed": recent_closing,

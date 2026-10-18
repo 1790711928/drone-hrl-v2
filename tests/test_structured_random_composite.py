@@ -52,6 +52,7 @@ def test_structured_random_composite_step_keeps_observation_schema():
     assert env.inner.inner.term_cfg.x_max == 125.0
     assert env.inner.inner.term_cfg.y_max == 125.0
     assert env.inner.inner.term_cfg.z_max == 75.0
+    assert env.inner.inner.term_cfg.k_escape == 8
     next_obs, _, terminated, truncated, info = env.step(0)
     assert obs.shape == env.observation_space.shape
     assert next_obs.shape == env.observation_space.shape
@@ -67,6 +68,12 @@ def test_success_window_is_configurable_and_uses_recent_metrics():
 
     env.success_window_lowlevel_steps = 3
     assert not env._continuous_success()
+
+
+def test_structured_escape_streak_is_configurable():
+    env = _make_env(structured_escape_streak=16)
+    env.reset(seed=6, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})
+    assert env.inner.inner.term_cfg.k_escape == 16
 
 
 def test_structured_escape_stops_episode_on_existing_escape_streak(monkeypatch):

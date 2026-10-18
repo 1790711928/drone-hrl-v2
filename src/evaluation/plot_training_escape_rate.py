@@ -62,6 +62,12 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--window", type=int, default=20)
     parser.add_argument("--mode", choices=("rolling", "cumulative"), default="rolling")
+    parser.add_argument(
+        "--focus-steps",
+        type=int,
+        default=None,
+        help="Show the first N steps in the main axes and the full run in an inset.",
+    )
     args = parser.parse_args()
     if args.window <= 0:
         parser.error("--window must be positive")
@@ -84,18 +90,60 @@ def main() -> None:
     import matplotlib.pyplot as plt
 
     figure, axis = plt.subplots(figsize=(8, 4.5))
+    focus_rows = rows
+    if args.focus_steps is not None:
+        if args.focus_steps <= 0:
+            parser.error("--focus-steps must be positive")
+        focus_rows = [row for row in rows if int(row["global_step"]) <= args.focus_steps]
+        if len(focus_rows) < 2:
+            raise ValueError("--focus-steps must include at least two recorded points")
     axis.plot(
-        [row["global_step"] for row in rows],
-        [100.0 * float(row["escape_rate"]) for row in rows],
+        [row["global_step"] for row in focus_rows],
+        [100.0 * float(row["escape_rate"]) for row in focus_rows],
         linewidth=1.4,
         label="escape rate",
     )
     axis.set_xlabel("step")
     axis.set_ylabel("escape rate (%)")
     axis.set_xlim(left=0)
+    if args.focus_steps is not None:
+        axis.set_xlim(0, args.focus_steps)
     axis.set_ylim(0, 100)
     axis.grid(alpha=0.25)
     axis.legend(loc="lower right")
+
+    final_row = rows[-1]
+    final_step = int(final_row["global_step"])
+    final_rate = 100.0 * float(final_row["escape_rate"])
+    if args.focus_steps is None:
+        axis.scatter([final_step], [final_rate], zorder=3)
+        axis.annotate(
+            f"x={final_step}\ny={final_rate:.1f}%",
+            xy=(final_step, final_rate),
+            xytext=(-70, 15),
+            textcoords="offset points",
+            bbox={"boxstyle": "round,pad=0.3", "fc": "white", "alpha": 0.85},
+        )
+    else:
+        inset = axis.inset_axes([0.53, 0.12, 0.44, 0.36])
+        inset.plot(
+            [row["global_step"] for row in rows],
+            [100.0 * float(row["escape_rate"]) for row in rows],
+            linewidth=1.0,
+        )
+        inset.scatter([final_step], [final_rate], s=18, zorder=3)
+        inset.annotate(
+            f"x={final_step}\ny={final_rate:.1f}%",
+            xy=(final_step, final_rate),
+            xytext=(-55, 10),
+            textcoords="offset points",
+            fontsize=8,
+            bbox={"boxstyle": "round,pad=0.25", "fc": "white", "alpha": 0.85},
+        )
+        inset.set_xlim(0, max(final_step, 1))
+        inset.set_ylim(0, 100)
+        inset.grid(alpha=0.2)
+        inset.tick_params(labelsize=7)
     figure.tight_layout()
     image_path = output_dir / "training_escape_rate.png"
     figure.savefig(image_path, dpi=180)

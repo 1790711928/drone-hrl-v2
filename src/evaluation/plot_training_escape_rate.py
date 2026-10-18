@@ -171,12 +171,14 @@ def main() -> None:
             else float(step)
         )
 
-    axis.plot(
+    line, = axis.plot(
         [x_value(row) for row in focus_rows],
         [100.0 * float(row["escape_rate"]) for row in focus_rows],
         linewidth=1.4,
         label="escape rate",
+        zorder=3,
     )
+    axis.scatter([0], [0], color=line.get_color(), s=14, zorder=4)
     axis.set_xlabel("step")
     axis.set_ylabel("escape rate (%)")
     axis.set_xlim(left=0)
@@ -186,7 +188,7 @@ def main() -> None:
         axis.set_xlim(0, total_step)
     axis.set_ylim(0, 100)
     axis.grid(alpha=0.25)
-    axis.legend(loc="lower right")
+    axis.legend(loc="upper right", bbox_to_anchor=(0.99, 0.98))
 
     final_row = rows[-1]
     final_step = args.display_end_step if args.display_end_step is not None else int(final_row["global_step"])
@@ -197,7 +199,7 @@ def main() -> None:
         axis.annotate(
             f"x={final_step}\ny={final_rate:.1f}%",
             xy=(final_display_step, final_rate),
-            xytext=(-70, 15),
+            xytext=(-70, -55),
             textcoords="offset points",
             bbox={"boxstyle": "round,pad=0.3", "fc": "white", "alpha": 0.85},
         )
@@ -233,17 +235,15 @@ def main() -> None:
         else:
             tick_steps = [step for step in (0, 5_000, 10_000, 15_000, 20_000, 30_000, 40_000, 50_000) if step <= total_step]
         if args.piecewise_focus_end is not None:
-            tick_steps = [
-                step
-                for step in (0, 1_000, 2_000, 3_000, 4_000, args.piecewise_focus_end, 10_000, 20_000, 30_000, 40_000, 50_000)
-                if step <= total_step
-            ]
+            tick_steps = [step for step in (0, 1_000, 5_000, 10_000, 50_000) if step <= total_step]
         axis.set_xticks([
             _piecewise_display_step(step, total_step, args.piecewise_focus_end, args.piecewise_focus_width)
             for step in tick_steps
         ])
         axis.set_xticklabels([str(step) for step in tick_steps])
     axis.margins(x=0, y=0)
+    axis.set_xlim(0, total_step)
+    axis.set_ylim(0, 100)
     figure.tight_layout()
     image_path = output_dir / "training_escape_rate.png"
     figure.savefig(image_path, dpi=180)

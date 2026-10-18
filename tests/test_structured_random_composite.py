@@ -76,9 +76,30 @@ def test_structured_escape_streak_is_configurable():
     assert env.inner.inner.term_cfg.k_escape == 16
 
 
+def test_structured_intermediate_escape_starts_next_phase(monkeypatch):
+    env = _make_env(structured_escape_streak=8)
+    env.reset(seed=7, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})
+    env.current_regime_schedule = ("rear", "flank")
+    env.structured_phase_index = 0
+    env.structured_completed_phases = 0
+    monkeypatch.setattr(highlevel_env, "evaluate_termination", lambda **_: EpisodeOutcome.ESCAPED)
+
+    _, _, terminated, truncated, info = env._continuous_lowlevel_step(np.zeros(3, dtype=np.float32), "rear")
+
+    assert not terminated
+    assert not truncated
+    assert info["outcome"] == "running"
+    assert info["phase_transition"]
+    assert env.structured_completed_phases == 1
+    assert env.structured_phase_index == 1
+
+
 def test_structured_escape_stops_episode_on_existing_escape_streak(monkeypatch):
     env = _make_env()
     env.reset(seed=5, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})
+    env.current_regime_schedule = ("rear",)
+    env.structured_phase_index = 0
+    env.structured_completed_phases = 0
     monkeypatch.setattr(highlevel_env, "evaluate_termination", lambda **_: EpisodeOutcome.ESCAPED)
 
     _, _, terminated, truncated, info = env._continuous_lowlevel_step(np.zeros(3, dtype=np.float32), "rear")

@@ -301,6 +301,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info: dict[str, Any] = {}
         self.current_showcase_seed: int | None = None
+        self.structured_phase_index = 0
+        self.structured_completed_phases = 0
 
     def _use_base_bounds(self) -> None:
         self.inner.inner.term_cfg = replace(self._base_term_cfg)
@@ -429,7 +431,10 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 if step_in_cycle < cursor:
                     return regime
             return SCRIPTED_SHOWCASE_SCHEDULE[-1]
-        schedule = self.current_regime_schedule if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else self.regime_schedule
+        if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            index = min(self.structured_phase_index, len(self.current_regime_schedule) - 1)
+            return self.current_regime_schedule[index]
+        schedule = self.regime_schedule
         index = self.continuous_lowlevel_steps // max(self.regime_duration, 1)
         return schedule[index % len(schedule)]
 
@@ -702,6 +707,29 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         )
         return Env3DState(evader=evader, pursuer=pursuer, step_count=0), template_name
 
+    def _structured_phase_threat_state(self, evader: Agent3DState, phase_name: str) -> Env3DState:
+        """Reintroduce a canonical local threat after an intermediate escape."""
+        scenario_name = PHASE_CANONICAL_SCENARIOS[phase_name]
+        scenario = SCENARIOS[scenario_name]
+        local_f, local_r, local_u = _canonical_local_offset(phase_name)
+        speed_delta = scenario.pursuer.speed - scenario.evader.speed
+        yaw_delta = scenario.pursuer.yaw - scenario.evader.yaw
+        pitch_delta = scenario.pursuer.pitch - scenario.evader.pitch
+        forward, right, up = _body_axes(evader)
+        pursuer = Agent3DState(
+            x=evader.x + local_f * forward[0] + local_r * right[0] + local_u * up[0],
+            y=evader.y + local_f * forward[1] + local_r * right[1] + local_u * up[1],
+            z=evader.z + local_f * forward[2] + local_r * right[2] + local_u * up[2],
+            speed=max(
+                self.inner.inner.env_cfg.pursuer_speed_min,
+                min(self.inner.inner.env_cfg.pursuer_speed_max, evader.speed + speed_delta),
+            ),
+            yaw=evader.yaw + yaw_delta,
+            pitch=evader.pitch + pitch_delta,
+        )
+        step_count = self.inner.inner.state.step_count if self.inner.inner.state is not None else 0
+        return Env3DState(evader=evader, pursuer=pursuer, step_count=step_count)
+
     def _reset_continuous(self, scenario_name: str) -> tuple[np.ndarray, dict[str, Any]]:
         requested_scenario = scenario_name
         self.current_scenario_name = scenario_name
@@ -716,6 +744,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
+        self.structured_phase_index = 0
+        self.structured_completed_phases = 0
         if requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
             self._use_structured_bounds()
             self.inner.inner.term_cfg = replace(
@@ -778,6 +808,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "episode_lowlevel_steps": self.episode_lowlevel_steps,
             "success_window_lowlevel_steps": self.success_window_lowlevel_steps,
             "escape_streak_required": self.structured_escape_streak if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else self._base_term_cfg.k_escape,
+            "structured_completed_phases": self.structured_completed_phases,
+            "structured_total_phases": len(self.current_regime_schedule) if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else 0,
             "final_distance": final_distance,
             "recent_distance": recent_distance,
             "recent_closing_speed": recent_closing,
@@ -842,8 +874,22 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             tstate=env.tstate,
         )
         reward_outcome = outcome
+        phase_transition = False
         if outcome == EpisodeOutcome.ESCAPED:
-            if self.scenario_set != STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+                self.structured_completed_phases += 1
+                if self.structured_completed_phases < len(self.current_regime_schedule):
+                    self.structured_phase_index += 1
+                    next_phase = self.current_regime_schedule[self.structured_phase_index]
+                    env.state = self._structured_phase_threat_state(evader_next, next_phase)
+                    env.tstate = TerminationState()
+                    pursuer_next = env.state.pursuer
+                    reward_outcome = EpisodeOutcome.RUNNING
+                    outcome = EpisodeOutcome.RUNNING
+                    phase_transition = True
+                    cur_distance = relative_distance(env.state)
+                    closing_speed = 0.0
+            else:
                 # In the legacy continuous modes, base-env escape is a useful
                 # signal but not an episode/phase completion event. Keep the
                 # state continuous and avoid repeatedly collecting the terminal
@@ -872,12 +918,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "closing_speed": closing_speed,
             "capture_streak": env.tstate.capture_streak,
             "escape_streak": env.tstate.escape_streak,
+            "phase_transition": phase_transition,
         }
         terminated = outcome in {EpisodeOutcome.CAPTURED, EpisodeOutcome.OUT_OF_BOUNDS}
         if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO and outcome == EpisodeOutcome.ESCAPED:
-            # Structured episodes represent an escape task. Once the existing
-            # k_escape streak is satisfied, stop before unnecessary flight can
-            # turn a successful separation into an out-of-bounds failure.
+            # Only the final structured phase terminates the episode. An
+            # intermediate escape starts the next scheduled threat phase.
             terminated = True
         return obs, float(reward), terminated, False, info
 
@@ -952,11 +998,13 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "scenario_set": self.scenario_set,
             "regime_lowlevel_steps": dict(regime_step_counts),
             "scheduled_regime_lowlevel_steps": dict(scheduled_regime_step_counts),
-            "phase_transition": False,
+            "phase_transition": bool(info.get("phase_transition", False)),
             "phase_success": False,
             "completed_phases": 0,
             "total_phases": 0,
             "early_safe_escape": bool(early_safe_escape),
+            "structured_completed_phases": self.structured_completed_phases,
+            "structured_total_phases": len(self.current_regime_schedule) if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else 0,
         })
         return obs, float(total_reward), bool(terminated), bool(truncated), info
 
@@ -985,6 +1033,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
+        self.structured_phase_index = 0
+        self.structured_completed_phases = 0
         self.current_showcase_seed = seed if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else None
 
         if options and "scenario_set" in options:

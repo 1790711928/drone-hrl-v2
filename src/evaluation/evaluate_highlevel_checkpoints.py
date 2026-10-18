@@ -42,6 +42,8 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
     final_distances: list[float] = []
     recent_distances: list[float] = []
     recent_closing_speeds: list[float] = []
+    completed_phase_counts: list[float] = []
+    total_phase_counts: list[float] = []
     env = HighLevelOptionEnv(low_models=low_models, **env_kwargs)
     try:
         for trial in range(episodes):
@@ -71,6 +73,8 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
             final_distances.append(float(info.get("final_distance", 0.0)))
             recent_distances.append(float(info.get("recent_distance", 0.0)))
             recent_closing_speeds.append(float(info.get("recent_closing_speed", 0.0)))
+            completed_phase_counts.append(float(info.get("structured_completed_phases", 0.0)))
+            total_phase_counts.append(float(info.get("structured_total_phases", 0.0)))
     finally:
         env.close()
 
@@ -90,6 +94,8 @@ def _evaluate_checkpoint(model, low_models, *, episodes: int, seed: int, env_kwa
         "mean_final_distance": statistics.mean(final_distances) if final_distances else 0.0,
         "mean_recent_distance": statistics.mean(recent_distances) if recent_distances else 0.0,
         "mean_recent_closing_speed": statistics.mean(recent_closing_speeds) if recent_closing_speeds else 0.0,
+        "mean_structured_completed_phases": statistics.mean(completed_phase_counts) if completed_phase_counts else 0.0,
+        "mean_structured_total_phases": statistics.mean(total_phase_counts) if total_phase_counts else 0.0,
     }
 
 

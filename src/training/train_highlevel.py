@@ -79,6 +79,12 @@ def main() -> None:
         action="store_true",
         help="For structured evaluation/training, sample only the four-phase schedules.",
     )
+    parser.add_argument(
+        "--structured-phase-count",
+        type=int,
+        default=None,
+        help="For structured training, generate cyclic schedules with this many phases.",
+    )
     args = parser.parse_args()
     if args.timesteps <= 0:
         parser.error("--timesteps must be positive")
@@ -149,6 +155,7 @@ def main() -> None:
             success_window_lowlevel_steps=args.success_window_lowlevel_steps,
             structured_escape_streak=args.structured_escape_streak,
             structured_four_phase_only=args.structured_four_phase_only,
+            structured_phase_count=args.structured_phase_count,
         )
         return Monitor(base_env, filename=str(monitor_path))
 
@@ -181,6 +188,7 @@ def main() -> None:
         "success_window_lowlevel_steps": args.success_window_lowlevel_steps,
         "structured_escape_streak": args.structured_escape_streak,
         "structured_four_phase_only": args.structured_four_phase_only,
+        "structured_phase_count": args.structured_phase_count,
         "low_model_paths": [str(path.resolve()) for path in low_paths],
     }
     started_at = utc_now()

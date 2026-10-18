@@ -54,6 +54,13 @@ def test_structured_four_phase_only_excludes_three_phase_schedules():
         assert len(env.current_regime_schedule) == 4
 
 
+def test_structured_phase_count_generates_requested_schedule_length():
+    env = _make_env(structured_phase_count=10)
+    _, info = env.reset(seed=21, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})
+    assert info["structured_total_phases"] == 10
+    assert len(env.current_regime_schedule) == 10
+
+
 def test_structured_random_composite_step_keeps_observation_schema():
     env = _make_env()
     obs, _ = env.reset(seed=4, options={"scenario_set": STRUCTURED_RANDOM_COMPOSITE_SCENARIO})

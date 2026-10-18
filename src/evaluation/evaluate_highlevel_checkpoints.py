@@ -160,6 +160,12 @@ def main() -> None:
         action="store_true",
         help="For structured evaluation, sample only the four-phase schedules.",
     )
+    parser.add_argument(
+        "--structured-phase-count",
+        type=int,
+        default=None,
+        help="For structured evaluation, generate cyclic schedules with this many phases.",
+    )
     args = parser.parse_args()
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
@@ -169,6 +175,10 @@ def main() -> None:
         parser.error("--success-window-lowlevel-steps must be positive")
     if args.structured_escape_streak <= 0:
         parser.error("--structured-escape-streak must be positive")
+    if args.structured_phase_count is not None and args.structured_phase_count <= 0:
+        parser.error("--structured-phase-count must be positive")
+    if args.structured_four_phase_only and args.structured_phase_count not in (None, 4):
+        parser.error("--structured-four-phase-only conflicts with --structured-phase-count")
     from src.training.highlevel_env import STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS
 
     episode_lowlevel_steps = args.episode_lowlevel_steps
@@ -210,6 +220,7 @@ def main() -> None:
         "success_window_lowlevel_steps": args.success_window_lowlevel_steps,
         "structured_escape_streak": args.structured_escape_streak,
         "structured_four_phase_only": args.structured_four_phase_only,
+        "structured_phase_count": args.structured_phase_count,
     }
 
     rows: list[dict[str, float | int | str]] = []

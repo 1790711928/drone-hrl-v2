@@ -181,6 +181,7 @@ STRUCTURED_COMPOSITE_SCHEDULES = (
     ("rear", "vertical", "flank", "boundary"),
     ("flank", "rear", "vertical", "boundary"),
 )
+STRUCTURED_PHASE_CYCLE = ("rear", "flank", "boundary", "vertical")
 CONTINUOUS_START_STATE = Env3DState(
     evader=Agent3DState(x=-5.0, y=0.0, z=14.0, speed=9.5, yaw=0.80, pitch=0.01),
     pursuer=Agent3DState(x=-18.0, y=-12.5, z=10.5, speed=11.0, yaw=0.80, pitch=0.03),
@@ -240,6 +241,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         success_window_lowlevel_steps: int = DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS,
         structured_escape_streak: int = STRUCTURED_DEFAULT_ESCAPE_STREAK,
         structured_four_phase_only: bool = False,
+        structured_phase_count: int | None = None,
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -265,6 +267,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.success_window_lowlevel_steps = max(int(success_window_lowlevel_steps), 1)
         self.structured_escape_streak = max(int(structured_escape_streak), 1)
         self.structured_four_phase_only = bool(structured_four_phase_only)
+        if structured_phase_count is not None and int(structured_phase_count) <= 0:
+            raise ValueError("structured_phase_count must be positive when provided")
+        if structured_four_phase_only and structured_phase_count not in (None, 4):
+            raise ValueError("structured_four_phase_only conflicts with structured_phase_count")
+        self.structured_phase_count = None if structured_phase_count is None else int(structured_phase_count)
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
@@ -754,7 +761,16 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 self.inner.inner.term_cfg,
                 k_escape=self.structured_escape_streak,
             )
-            schedules = STRUCTURED_COMPOSITE_SCHEDULES
+            if self.structured_phase_count is not None:
+                schedules = tuple(
+                    tuple(
+                        STRUCTURED_PHASE_CYCLE[(offset + index) % len(STRUCTURED_PHASE_CYCLE)]
+                        for index in range(self.structured_phase_count)
+                    )
+                    for offset in range(len(STRUCTURED_PHASE_CYCLE))
+                )
+            else:
+                schedules = STRUCTURED_COMPOSITE_SCHEDULES
             if self.structured_four_phase_only:
                 schedules = tuple(schedule for schedule in schedules if len(schedule) == 4)
             schedule_index = int(self.np_random.integers(len(schedules)))

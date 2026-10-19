@@ -50,8 +50,16 @@ def _action_probabilities(model, obs) -> list[float]:
     return distribution.distribution.probs.detach().cpu().numpy().reshape(-1).tolist()
 
 
-def _select_action(model, obs, disabled_policy: int | None, fallback_mode: str, previous_action: int | None) -> tuple[int, int]:
-    proposed_action, _ = model.predict(obs, deterministic=True)
+def _select_action(
+    model,
+    obs,
+    disabled_policy: int | None,
+    fallback_mode: str,
+    previous_action: int | None,
+    proposed_action=None,
+) -> tuple[int, int]:
+    if proposed_action is None:
+        proposed_action, _ = model.predict(obs, deterministic=True)
     proposed = int(proposed_action)
     if disabled_policy is None or proposed != disabled_policy:
         return proposed, 0
@@ -100,10 +108,23 @@ def _evaluate_checkpoint(
             info: dict = {"outcome": "timeout"}
             previous_action: int | None = None
             remap_count = 0
+            requested_actions: list[int] = []
+            executed_actions: list[int] = []
             while not (terminated or truncated):
-                action, remapped = _select_action(model, obs, disabled_policy, fallback_mode, previous_action)
+                proposed_action, _ = model.predict(obs, deterministic=True)
+                requested = int(proposed_action)
+                action, remapped = _select_action(
+                    model,
+                    obs,
+                    disabled_policy,
+                    fallback_mode,
+                    previous_action,
+                    proposed_action=proposed,
+                )
                 remap_count += remapped
                 previous_action = action
+                requested_actions.append(requested)
+                executed_actions.append(action)
                 obs, reward, terminated, truncated, info = env.step(action)
                 total_reward += float(reward)
                 steps += 1
@@ -140,6 +161,8 @@ def _evaluate_checkpoint(
                     "disabled_policy": "none" if disabled_policy is None else f"pi{disabled_policy + 1}",
                     "disabled_policy_index": -1 if disabled_policy is None else disabled_policy,
                     "action_remap_count": remap_count,
+                    "requested_actions": ",".join(str(action) for action in requested_actions),
+                    "executed_actions": ",".join(str(action) for action in executed_actions),
                 }
             )
     finally:

@@ -28,9 +28,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--warmup-mode",
-        choices=("skip", "denominator_floor"),
+        choices=("skip", "denominator_floor", "crop_rebase"),
         default="skip",
-        help="skip hides warmup points; denominator_floor keeps every point and stabilizes the early rate.",
+        help=(
+            "skip hides warmup points; denominator_floor keeps every point and stabilizes the early rate; "
+            "crop_rebase hides warmup points and remaps the retained curve to the full display axis."
+        ),
     )
     args = parser.parse_args()
     if args.display_end_step <= 0 or args.focus_end_step <= 0:
@@ -52,6 +55,9 @@ def main() -> None:
     if "escaped" not in raw_rows[0]:
         raise ValueError("input CSV must contain an escaped column")
 
+    if args.warmup_mode == "crop_rebase" and args.warmup_episodes <= 0:
+        parser.error("crop_rebase requires --warmup-episodes greater than zero")
+
     cumulative_rows: list[dict[str, float | int]] = [
         {
             "evaluation_episode": 0,
@@ -61,11 +67,18 @@ def main() -> None:
     ]
     escaped_total = 0
     total = len(raw_rows)
+    retained_total = max(1, total - args.warmup_episodes)
     for index, row in enumerate(raw_rows, start=1):
         escaped_total += int(float(row["escaped"]))
         if args.warmup_mode == "skip" and index <= args.warmup_episodes:
             continue
-        source_step = args.display_end_step * index / total
+        if args.warmup_mode == "crop_rebase":
+            if index <= args.warmup_episodes:
+                continue
+            relative_index = (index - args.warmup_episodes) / retained_total
+            source_step = args.display_end_step * relative_index
+        else:
+            source_step = args.display_end_step * index / total
         display_step = _piecewise_display_step(
             int(source_step), args.display_end_step, args.focus_end_step, args.focus_width
         )

@@ -19,7 +19,9 @@ from pathlib import Path
 def _checkpoint_step(path: Path) -> int:
     match = re.search(r"(\d+)_steps\.zip$", path.name)
     if match is None:
-        raise ValueError(f"checkpoint filename does not contain '<steps>_steps.zip': {path.name}")
+        match = re.search(r"run(\d+).*\.zip$", path.name)
+    if match is None:
+        raise ValueError(f"checkpoint filename does not contain a step marker: {path.name}")
     return int(match.group(1))
 
 

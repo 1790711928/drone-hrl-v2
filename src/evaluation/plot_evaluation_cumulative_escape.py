@@ -21,6 +21,12 @@ def main() -> None:
     parser.add_argument("--focus-end-step", type=int, default=5_000)
     parser.add_argument("--focus-width", type=float, default=0.5)
     parser.add_argument(
+        "--axis-mode",
+        choices=("piecewise", "linear"),
+        default="piecewise",
+        help="Use the paper's focused piecewise axis or a linear display axis for fixed-model evaluations.",
+    )
+    parser.add_argument(
         "--warmup-episodes",
         type=int,
         default=0,
@@ -79,8 +85,12 @@ def main() -> None:
             source_step = args.display_end_step * relative_index
         else:
             source_step = args.display_end_step * index / total
-        display_step = _piecewise_display_step(
-            int(source_step), args.display_end_step, args.focus_end_step, args.focus_width
+        display_step = (
+            float(source_step)
+            if args.axis_mode == "linear"
+            else _piecewise_display_step(
+                int(source_step), args.display_end_step, args.focus_end_step, args.focus_width
+            )
         )
         cumulative_rows.append(
             {
@@ -131,10 +141,14 @@ def main() -> None:
     )
     tick_steps = [0, 1_000, 5_000, 10_000, 50_000]
     tick_steps = [step for step in tick_steps if step <= args.display_end_step]
-    axis.set_xticks([
-        _piecewise_display_step(step, args.display_end_step, args.focus_end_step, args.focus_width)
-        for step in tick_steps
-    ])
+    axis.set_xticks(
+        [
+            float(step)
+            if args.axis_mode == "linear"
+            else _piecewise_display_step(step, args.display_end_step, args.focus_end_step, args.focus_width)
+            for step in tick_steps
+        ]
+    )
     axis.set_xticklabels([str(step) for step in tick_steps])
     figure.tight_layout()
     image_path = output_dir / "evaluation_cumulative_escape.png"

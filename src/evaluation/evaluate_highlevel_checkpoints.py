@@ -121,7 +121,7 @@ def _evaluate_checkpoint(
                     disabled_policy,
                     fallback_mode,
                     previous_action,
-                    proposed_action=proposed,
+                    proposed_action=proposed_action,
                 )
                 remap_count += remapped
                 previous_action = action

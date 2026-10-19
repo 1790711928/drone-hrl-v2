@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import random
 import re
 import statistics
 from pathlib import Path
@@ -31,8 +32,47 @@ def _collect_checkpoints(checkpoint_dir: Path, pattern: str, max_step: int | Non
     return paths
 
 
+def _episode_disabled_policy(mode: str, probability: float, seed: int, trial: int) -> int | None:
+    if mode == "none":
+        return None
+    if probability < 1.0 and random.Random(seed * 1_000_003 + trial).random() >= probability:
+        return None
+    block = trial // 4
+    offset = trial % 4
+    order = list(range(4))
+    random.Random(seed * 10_007 + block).shuffle(order)
+    return order[offset]
+
+
+def _action_probabilities(model, obs) -> list[float]:
+    obs_tensor, _ = model.policy.obs_to_tensor(obs)
+    distribution = model.policy.get_distribution(obs_tensor)
+    return distribution.distribution.probs.detach().cpu().numpy().reshape(-1).tolist()
+
+
+def _select_action(model, obs, disabled_policy: int | None, fallback_mode: str, previous_action: int | None) -> tuple[int, int]:
+    proposed_action, _ = model.predict(obs, deterministic=True)
+    proposed = int(proposed_action)
+    if disabled_policy is None or proposed != disabled_policy:
+        return proposed, 0
+    available = [index for index in range(4) if index != disabled_policy]
+    if fallback_mode == "hold_previous" and previous_action in available:
+        return int(previous_action), 1
+    probabilities = _action_probabilities(model, obs)
+    replacement = max(available, key=lambda index: probabilities[index])
+    return replacement, 1
+
+
 def _evaluate_checkpoint(
-    model, low_models, *, episodes: int, seed: int, env_kwargs: dict
+    model,
+    low_models,
+    *,
+    episodes: int,
+    seed: int,
+    env_kwargs: dict,
+    disable_policy_mode: str,
+    disable_probability: float,
+    fallback_mode: str,
 ) -> tuple[dict[str, float | int | str], list[dict[str, float | int | str]]]:
     from src.training.highlevel_env import HighLevelOptionEnv
 
@@ -51,15 +91,20 @@ def _evaluate_checkpoint(
     try:
         for trial in range(episodes):
             episode_seed = seed + trial
+            disabled_policy = _episode_disabled_policy(disable_policy_mode, disable_probability, seed, trial)
             obs, _ = env.reset(seed=episode_seed, options={"scenario_set": env_kwargs["scenario_set"]})
             total_reward = 0.0
             steps = 0
             terminated = False
             truncated = False
             info: dict = {"outcome": "timeout"}
+            previous_action: int | None = None
+            remap_count = 0
             while not (terminated or truncated):
-                action, _ = model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = env.step(int(action))
+                action, remapped = _select_action(model, obs, disabled_policy, fallback_mode, previous_action)
+                remap_count += remapped
+                previous_action = action
+                obs, reward, terminated, truncated, info = env.step(action)
                 total_reward += float(reward)
                 steps += 1
             outcomes.append(str(info.get("outcome", "timeout")))
@@ -92,6 +137,9 @@ def _evaluate_checkpoint(
                     "recent_closing_speed": float(info.get("recent_closing_speed", 0.0)),
                     "structured_completed_phases": float(info.get("structured_completed_phases", 0.0)),
                     "structured_total_phases": float(info.get("structured_total_phases", 0.0)),
+                    "disabled_policy": "none" if disabled_policy is None else f"pi{disabled_policy + 1}",
+                    "disabled_policy_index": -1 if disabled_policy is None else disabled_policy,
+                    "action_remap_count": remap_count,
                 }
             )
     finally:
@@ -115,6 +163,9 @@ def _evaluate_checkpoint(
         "mean_recent_closing_speed": statistics.mean(recent_closing_speeds) if recent_closing_speeds else 0.0,
         "mean_structured_completed_phases": statistics.mean(completed_phase_counts) if completed_phase_counts else 0.0,
         "mean_structured_total_phases": statistics.mean(total_phase_counts) if total_phase_counts else 0.0,
+        "disable_policy_mode": disable_policy_mode,
+        "disable_probability": disable_probability,
+        "fallback_mode": fallback_mode,
     }, raw_rows
 
 
@@ -185,6 +236,18 @@ def main() -> None:
         default=None,
         help="For structured evaluation, generate cyclic schedules with this many phases.",
     )
+    parser.add_argument(
+        "--disable-policy-mode",
+        choices=["none", "balanced_random"],
+        default="none",
+        help="Evaluation-only low-level skill ablation mode.",
+    )
+    parser.add_argument("--disable-probability", type=float, default=1.0)
+    parser.add_argument(
+        "--fallback-mode",
+        choices=["argmax_available", "hold_previous"],
+        default="argmax_available",
+    )
     args = parser.parse_args()
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
@@ -198,6 +261,8 @@ def main() -> None:
         parser.error("--structured-phase-count must be positive")
     if args.structured_four_phase_only and args.structured_phase_count not in (None, 4):
         parser.error("--structured-four-phase-only conflicts with --structured-phase-count")
+    if not 0.0 <= args.disable_probability <= 1.0:
+        parser.error("--disable-probability must be between 0 and 1")
     from src.training.highlevel_env import STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS
 
     episode_lowlevel_steps = args.episode_lowlevel_steps
@@ -247,7 +312,14 @@ def main() -> None:
     for checkpoint in checkpoints:
         model = PPO.load(str(checkpoint), device=args.device)
         result, checkpoint_raw_rows = _evaluate_checkpoint(
-            model, low_models, episodes=args.episodes, seed=args.seed, env_kwargs=env_kwargs
+            model,
+            low_models,
+            episodes=args.episodes,
+            seed=args.seed,
+            env_kwargs=env_kwargs,
+            disable_policy_mode=args.disable_policy_mode,
+            disable_probability=args.disable_probability,
+            fallback_mode=args.fallback_mode,
         )
         for raw_row in checkpoint_raw_rows:
             raw_rows.append({"checkpoint": checkpoint.name, "checkpoint_step": _checkpoint_step(checkpoint), **raw_row})

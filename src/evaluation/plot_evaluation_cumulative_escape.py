@@ -21,6 +21,12 @@ def main() -> None:
     parser.add_argument("--focus-end-step", type=int, default=5_000)
     parser.add_argument("--focus-width", type=float, default=0.5)
     parser.add_argument(
+        "--episode-focus-fraction",
+        type=float,
+        default=None,
+        help="Allocate this fraction of retained evaluation episodes to the focused first segment.",
+    )
+    parser.add_argument(
         "--axis-mode",
         choices=("piecewise", "linear"),
         default="piecewise",
@@ -46,6 +52,8 @@ def main() -> None:
         parser.error("display and focus steps must be positive")
     if not 0.0 < args.focus_width < 1.0:
         parser.error("focus width must be between 0 and 1")
+    if args.episode_focus_fraction is not None and not 0.0 < args.episode_focus_fraction < 1.0:
+        parser.error("--episode-focus-fraction must be between 0 and 1")
     if args.warmup_episodes < 0:
         parser.error("--warmup-episodes must be non-negative")
 
@@ -82,9 +90,17 @@ def main() -> None:
             if index <= args.warmup_episodes:
                 continue
             relative_index = (index - args.warmup_episodes) / retained_total
-            source_step = args.display_end_step * relative_index
         else:
-            source_step = args.display_end_step * index / total
+            relative_index = index / total
+
+        if args.episode_focus_fraction is not None:
+            if relative_index <= args.episode_focus_fraction:
+                source_step = args.focus_end_step * relative_index / args.episode_focus_fraction
+            else:
+                tail_fraction = (relative_index - args.episode_focus_fraction) / (1.0 - args.episode_focus_fraction)
+                source_step = args.focus_end_step + (args.display_end_step - args.focus_end_step) * tail_fraction
+        else:
+            source_step = args.display_end_step * relative_index
         display_step = (
             float(source_step)
             if args.axis_mode == "linear"

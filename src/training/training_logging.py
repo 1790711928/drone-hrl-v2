@@ -81,6 +81,9 @@ class EpisodeRewardCallback(BaseCallback):
         "outcome",
         "escaped",
         "early_safe_escape",
+        "disabled_policy",
+        "disabled_policy_index",
+        "action_remap_count",
         "policy_name",
         "seed",
         "elapsed_time",
@@ -130,6 +133,15 @@ class EpisodeRewardCallback(BaseCallback):
                     "outcome": outcome,
                     "escaped": int(outcome == "escaped"),
                     "early_safe_escape": int(bool(info.get("early_safe_escape", False)))
+                    if isinstance(info, dict)
+                    else 0,
+                    "disabled_policy": str(info.get("disabled_policy", "none"))
+                    if isinstance(info, dict)
+                    else "none",
+                    "disabled_policy_index": int(info.get("disabled_policy_index", -1))
+                    if isinstance(info, dict)
+                    else -1,
+                    "action_remap_count": int(info.get("action_remap_count", 0))
                     if isinstance(info, dict)
                     else 0,
                     "policy_name": self.policy_name,

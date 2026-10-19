@@ -242,6 +242,9 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         structured_escape_streak: int = STRUCTURED_DEFAULT_ESCAPE_STREAK,
         structured_four_phase_only: bool = False,
         structured_phase_count: int | None = None,
+        disabled_policy_mode: str = "none",
+        disable_probability: float = 1.0,
+        fallback_mode: str = "hold_previous",
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -267,6 +270,19 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.success_window_lowlevel_steps = max(int(success_window_lowlevel_steps), 1)
         self.structured_escape_streak = max(int(structured_escape_streak), 1)
         self.structured_four_phase_only = bool(structured_four_phase_only)
+        if disabled_policy_mode not in {"none", "balanced_random"}:
+            raise ValueError("disabled_policy_mode must be 'none' or 'balanced_random'")
+        if not 0.0 <= float(disable_probability) <= 1.0:
+            raise ValueError("disable_probability must be between 0 and 1")
+        if fallback_mode not in {"hold_previous", "random_available"}:
+            raise ValueError("fallback_mode must be 'hold_previous' or 'random_available'")
+        self.disabled_policy_mode = disabled_policy_mode
+        self.disable_probability = float(disable_probability)
+        self.fallback_mode = fallback_mode
+        self.training_episode_index = 0
+        self.disabled_policy_index: int | None = None
+        self.action_remap_count = 0
+        self._disabled_block: list[int] = []
         if structured_phase_count is not None and int(structured_phase_count) <= 0:
             raise ValueError("structured_phase_count must be positive when provided")
         if structured_four_phase_only and structured_phase_count not in (None, 4):
@@ -312,6 +328,35 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.current_showcase_seed: int | None = None
         self.structured_phase_index = 0
         self.structured_completed_phases = 0
+
+    def _select_disabled_policy(self) -> int | None:
+        """Choose one unavailable skill per episode, balanced over blocks of four."""
+        self.training_episode_index += 1
+        if self.disabled_policy_mode == "none":
+            return None
+        if self.disable_probability < 1.0 and float(self.np_random.random()) >= self.disable_probability:
+            return None
+        block_position = (self.training_episode_index - 1) % 4
+        if block_position == 0 or not self._disabled_block:
+            self._disabled_block = [int(value) for value in self.np_random.permutation(4)]
+        return self._disabled_block[block_position]
+
+    def _resolve_option(self, requested: int) -> tuple[int, bool]:
+        requested = int(np.clip(requested, 0, 3))
+        disabled = self.disabled_policy_index
+        if disabled is None or requested != disabled:
+            return requested, False
+        available = [index for index in range(4) if index != disabled]
+        if self.fallback_mode == "hold_previous" and self.prev_option in available:
+            return int(self.prev_option), True
+        return int(self.np_random.choice(available)), True
+
+    def _skill_info(self) -> dict[str, Any]:
+        return {
+            "disabled_policy": "none" if self.disabled_policy_index is None else f"pi{self.disabled_policy_index + 1}",
+            "disabled_policy_index": -1 if self.disabled_policy_index is None else self.disabled_policy_index,
+            "action_remap_count": self.action_remap_count,
+        }
 
     def _use_base_bounds(self) -> None:
         self.inner.inner.term_cfg = replace(self._base_term_cfg)
@@ -1033,6 +1078,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
+        self.disabled_policy_index = self._select_disabled_policy()
+        self.action_remap_count = 0
         self.prev_option = None
         self.highlevel_step_count = 0
         self.switch_count = 0
@@ -1071,31 +1118,38 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             base = requested_name or self._sample_basic()
             obs, info = self.inner.reset(seed=seed, options={"scenario": base})
             self.current_scenario_name = base
-            info.update({"scenario_name": base, "scenario_set": "basic"})
+            info.update({"scenario_name": base, "scenario_set": "basic", **self._skill_info()})
             return obs, info
         if self.scenario_set == "mixed":
             mixed_name, base = self._sample_mixed()
             obs, info = self.inner.reset(seed=seed, options={"scenario": base})
             self.current_scenario_name = mixed_name
-            info.update({"scenario_name": mixed_name, "base_scenario": base, "scenario_set": "mixed"})
+            info.update({"scenario_name": mixed_name, "base_scenario": base, "scenario_set": "mixed", **self._skill_info()})
             return obs, info
         if self.scenario_set == "composite":
             comp = requested_name or str(self.np_random.choice(list(COMPOSITE_SCENARIOS.keys())))
             self.current_scenario_name = comp
-            return self._reset_composite_state(comp), {"scenario_name": comp, "scenario_set": "composite"}
+            return self._reset_composite_state(comp), {"scenario_name": comp, "scenario_set": "composite", **self._skill_info()}
         if self._is_continuous_set():
-            return self._reset_continuous(self.scenario_set)
+            obs, info = self._reset_continuous(self.scenario_set)
+            info.update(self._skill_info())
+            return obs, info
 
         seq = requested_name or str(self.np_random.choice(list(SEQUENTIAL_SCENARIOS.keys())))
         self.current_scenario_name = seq
         self.phase_names = SEQUENTIAL_SCENARIOS[seq].phases
         obs = self._inject_current_phase()
-        return obs, {"scenario_name": seq, "scenario_set": "sequential", **self._phase_info()}
+        return obs, {"scenario_name": seq, "scenario_set": "sequential", **self._phase_info(), **self._skill_info()}
 
     def step(self, action: int):
-        idx = int(np.clip(action, 0, 3))
+        requested_idx = int(np.clip(action, 0, 3))
+        idx, remapped = self._resolve_option(requested_idx)
+        if remapped:
+            self.action_remap_count += 1
         if self._is_continuous_set():
-            return self._step_continuous_pursuit(idx)
+            result = self._step_continuous_pursuit(idx)
+            result[-1].update({"requested_option": requested_idx, **self._skill_info()})
+            return result
         total_reward = 0.0
         duration_used = 0
         terminated = False
@@ -1182,6 +1236,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         info.update(
             {
                 "selected_option": idx,
+                "requested_option": requested_idx,
                 "option_duration_used": duration_used,
                 "switch_count": self.switch_count,
                 "scenario_name": self.current_scenario_name,
@@ -1189,6 +1244,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 "phase_transition": phase_transition,
                 **self._phase_info(),
                 "phase_success": phase_transition,
+                **self._skill_info(),
             }
         )
         return obs, float(total_reward), bool(terminated), bool(truncated), info

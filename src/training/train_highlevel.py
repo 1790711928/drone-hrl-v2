@@ -75,6 +75,19 @@ def main() -> None:
     parser.add_argument("--success-window-lowlevel-steps", type=int, default=30)
     parser.add_argument("--structured-escape-streak", type=int, default=8)
     parser.add_argument(
+        "--disabled-policy-mode",
+        choices=["none", "balanced_random"],
+        default="none",
+        help="Optionally disable one low-level skill per episode while keeping four PPO actions.",
+    )
+    parser.add_argument("--disable-probability", type=float, default=1.0)
+    parser.add_argument(
+        "--fallback-mode",
+        choices=["hold_previous", "random_available"],
+        default="hold_previous",
+        help="Action used when PPO selects the disabled skill during ablation training.",
+    )
+    parser.add_argument(
         "--structured-four-phase-only",
         action="store_true",
         help="For structured evaluation/training, sample only the four-phase schedules.",
@@ -94,6 +107,8 @@ def main() -> None:
         parser.error("--success-window-lowlevel-steps must be positive")
     if args.structured_escape_streak <= 0:
         parser.error("--structured-escape-streak must be positive")
+    if not 0.0 <= args.disable_probability <= 1.0:
+        parser.error("--disable-probability must be between 0 and 1")
     from src.training.highlevel_env import HighLevelOptionEnv, STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS
 
     episode_lowlevel_steps = args.episode_lowlevel_steps
@@ -156,6 +171,9 @@ def main() -> None:
             structured_escape_streak=args.structured_escape_streak,
             structured_four_phase_only=args.structured_four_phase_only,
             structured_phase_count=args.structured_phase_count,
+            disabled_policy_mode=args.disabled_policy_mode,
+            disable_probability=args.disable_probability,
+            fallback_mode=args.fallback_mode,
         )
         return Monitor(base_env, filename=str(monitor_path))
 
@@ -189,6 +207,9 @@ def main() -> None:
         "structured_escape_streak": args.structured_escape_streak,
         "structured_four_phase_only": args.structured_four_phase_only,
         "structured_phase_count": args.structured_phase_count,
+        "disabled_policy_mode": args.disabled_policy_mode,
+        "disable_probability": args.disable_probability,
+        "fallback_mode": args.fallback_mode,
         "low_model_paths": [str(path.resolve()) for path in low_paths],
     }
     started_at = utc_now()

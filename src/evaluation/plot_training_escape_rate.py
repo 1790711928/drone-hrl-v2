@@ -44,7 +44,12 @@ def _piecewise_display_step(
     return total_step * (widths[0] + widths[1] + widths[2] * fraction)
 
 
-def _read_escape_rows(path: Path, window: int, mode: str = "rolling") -> list[dict[str, float | int]]:
+def _read_escape_rows(
+    path: Path,
+    window: int,
+    mode: str = "rolling",
+    warmup_episodes: int = 0,
+) -> list[dict[str, float | int]]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         fields = set(reader.fieldnames or [])
@@ -66,6 +71,8 @@ def _read_escape_rows(path: Path, window: int, mode: str = "rolling") -> list[di
                 if mode == "cumulative"
                 else sum(history) / len(history)
             )
+            if total_episodes <= warmup_episodes:
+                continue
             output.append(
                 {
                     "global_step": int(float(row["global_step"])),
@@ -93,6 +100,12 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--window", type=int, default=20)
     parser.add_argument("--mode", choices=("rolling", "cumulative"), default="rolling")
+    parser.add_argument(
+        "--warmup-episodes",
+        type=int,
+        default=0,
+        help="Hide the first N completed episodes from the display while retaining their cumulative statistics.",
+    )
     parser.add_argument(
         "--focus-steps",
         type=int,
@@ -125,8 +138,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.window <= 0:
         parser.error("--window must be positive")
+    if args.warmup_episodes < 0:
+        parser.error("--warmup-episodes must be non-negative")
 
-    rows = _read_escape_rows(Path(args.input_csv), args.window, args.mode)
+    rows = _read_escape_rows(Path(args.input_csv), args.window, args.mode, args.warmup_episodes)
     if not rows:
         raise ValueError("input CSV contains no episode rows")
     output_dir = Path(args.output_dir)

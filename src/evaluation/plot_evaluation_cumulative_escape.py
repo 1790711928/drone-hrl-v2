@@ -20,11 +20,19 @@ def main() -> None:
     parser.add_argument("--display-end-step", type=int, default=50_000)
     parser.add_argument("--focus-end-step", type=int, default=5_000)
     parser.add_argument("--focus-width", type=float, default=0.5)
+    parser.add_argument(
+        "--warmup-episodes",
+        type=int,
+        default=0,
+        help="Keep the first N evaluation episodes out of the displayed curve while retaining them in raw data.",
+    )
     args = parser.parse_args()
     if args.display_end_step <= 0 or args.focus_end_step <= 0:
         parser.error("display and focus steps must be positive")
     if not 0.0 < args.focus_width < 1.0:
         parser.error("focus width must be between 0 and 1")
+    if args.warmup_episodes < 0:
+        parser.error("--warmup-episodes must be non-negative")
 
     with Path(args.input_csv).open(newline="", encoding="utf-8") as handle:
         raw_rows = sorted(
@@ -33,6 +41,8 @@ def main() -> None:
         )
     if not raw_rows:
         raise ValueError("input CSV contains no evaluation episodes")
+    if args.warmup_episodes >= len(raw_rows):
+        raise ValueError("--warmup-episodes must be smaller than the number of evaluation episodes")
     if "escaped" not in raw_rows[0]:
         raise ValueError("input CSV must contain an escaped column")
 
@@ -47,6 +57,8 @@ def main() -> None:
     total = len(raw_rows)
     for index, row in enumerate(raw_rows, start=1):
         escaped_total += int(float(row["escaped"]))
+        if index <= args.warmup_episodes:
+            continue
         source_step = args.display_end_step * index / total
         display_step = _piecewise_display_step(
             int(source_step), args.display_end_step, args.focus_end_step, args.focus_width

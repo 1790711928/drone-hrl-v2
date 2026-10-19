@@ -11,9 +11,9 @@ from src.evaluation.plot_training_escape_rate import _piecewise_display_step
 
 METHODS = (
     ("hrl", "HRL", "#1f77b4"),
-    ("random_disable", "随机禁用策略", "#ff7f0e"),
-    ("rule_guided", "规则引导系统", "#2ca02c"),
-    ("single_sac", "单一 SAC 策略", "#d62728"),
+    ("random_disable", "Random Policy Disable", "#ff7f0e"),
+    ("rule_guided", "Rule-guided", "#2ca02c"),
+    ("single_sac", "Single SAC", "#d62728"),
 )
 
 
@@ -127,7 +127,6 @@ def main() -> None:
     axis.set_ylim(0, 100)
     axis.margins(x=0, y=0)
     axis.grid(alpha=0.25)
-    axis.legend(loc="upper left", frameon=True)
 
     # Put method/value boxes in a right-side column so endpoint values remain readable.
     figure.subplots_adjust(right=0.78)
@@ -140,7 +139,7 @@ def main() -> None:
             transform=axis.transAxes,
             va="center",
             ha="left",
-            bbox={"boxstyle": "round,pad=0.35", "fc": "white", "ec": color, "lw": 1.6},
+            bbox={"boxstyle": "round,pad=0.35", "fc": "white", "ec": "#222222", "lw": 1.2},
             color="#222222",
         )
 

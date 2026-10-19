@@ -127,13 +127,13 @@ def main() -> None:
     axis.set_ylim(0, 100)
     axis.margins(x=0, y=0)
     axis.grid(alpha=0.25)
+    axis.legend(loc="upper left", frameon=True)
 
-    # Put method/value boxes in a right-side column so endpoint values remain readable.
-    figure.subplots_adjust(right=0.78)
-    box_y = {"hrl": 0.82, "random_disable": 0.66, "rule_guided": 0.50, "single_sac": 0.34}
+    # Keep neutral method/value boxes inside the axes, below the curves.
+    box_y = {"hrl": 0.34, "random_disable": 0.25, "rule_guided": 0.16, "single_sac": 0.07}
     for key, label, color in METHODS:
         axis.text(
-            1.02,
+            0.72,
             box_y[key],
             f"{label}\ny={final_rates[key]:.1f}%",
             transform=axis.transAxes,
@@ -141,6 +141,7 @@ def main() -> None:
             ha="left",
             bbox={"boxstyle": "round,pad=0.35", "fc": "white", "ec": "#222222", "lw": 1.2},
             color="#222222",
+            zorder=5,
         )
 
     tick_steps = [step for step in (0, 1_000, 5_000, 10_000, 50_000) if step <= args.display_end_step]

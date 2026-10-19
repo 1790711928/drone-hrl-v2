@@ -24,7 +24,13 @@ def main() -> None:
         "--warmup-episodes",
         type=int,
         default=0,
-        help="Keep the first N evaluation episodes out of the displayed curve while retaining them in raw data.",
+        help="Use at least N episodes in the early cumulative-rate denominator.",
+    )
+    parser.add_argument(
+        "--warmup-mode",
+        choices=("skip", "denominator_floor"),
+        default="skip",
+        help="skip hides warmup points; denominator_floor keeps every point and stabilizes the early rate.",
     )
     args = parser.parse_args()
     if args.display_end_step <= 0 or args.focus_end_step <= 0:
@@ -57,7 +63,7 @@ def main() -> None:
     total = len(raw_rows)
     for index, row in enumerate(raw_rows, start=1):
         escaped_total += int(float(row["escaped"]))
-        if index <= args.warmup_episodes:
+        if args.warmup_mode == "skip" and index <= args.warmup_episodes:
             continue
         source_step = args.display_end_step * index / total
         display_step = _piecewise_display_step(
@@ -67,7 +73,7 @@ def main() -> None:
             {
                 "evaluation_episode": index,
                 "step": display_step,
-                "escape_rate_percent": 100.0 * escaped_total / index,
+                "escape_rate_percent": 100.0 * escaped_total / max(index, args.warmup_episodes),
             }
         )
 

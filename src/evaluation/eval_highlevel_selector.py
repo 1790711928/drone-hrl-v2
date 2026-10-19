@@ -86,6 +86,7 @@ def continuous_diagnostic_option(info: dict, mode: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate fixed/random/expert/high-level selector on scenario sets")
     parser.add_argument("--episodes", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=10000)
     parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "expert", "highlevel", "continuous_heuristic", "regime_oracle", "scripted_showcase"], default="fixed")
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
@@ -147,6 +148,7 @@ def main() -> None:
         parser.error("--structured-phase-count must be positive")
     if args.structured_four_phase_only and args.structured_phase_count not in (None, 4):
         parser.error("--structured-four-phase-only conflicts with --structured-phase-count")
+    random.seed(args.seed)
     if args.episode_lowlevel_steps is None:
         args.episode_lowlevel_steps = STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS if args.scenario_set == "structured_random_composite" else 400
     if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
@@ -240,8 +242,8 @@ def main() -> None:
     timeout = 0
     episode_records: list[dict[str, object]] = []
 
-    for _ in range(args.episodes):
-        obs, info = env.reset(options={"scenario_set": args.scenario_set})
+    for episode_number in range(args.episodes):
+        obs, info = env.reset(seed=args.seed + episode_number, options={"scenario_set": args.scenario_set})
         scen = str(info.get("scenario_name", "unknown"))
         scenario_outcomes.setdefault(scen, {"escaped": 0, "captured": 0, "out_of_bounds": 0, "timeout": 0})
         scenario_option_usage.setdefault(scen, [0, 0, 0, 0])

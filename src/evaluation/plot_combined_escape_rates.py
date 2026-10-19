@@ -129,14 +129,13 @@ def main() -> None:
     axis.grid(alpha=0.25)
     axis.legend(loc="upper left", frameon=True)
 
-    # Keep neutral method/value boxes inside the axes, below the curves.
-    box_y = {"hrl": 0.34, "random_disable": 0.25, "rule_guided": 0.16, "single_sac": 0.07}
+    # Keep each neutral method/value box inside the axes, just below its curve end.
+    box_x = args.display_end_step * 0.79
     for key, label, color in METHODS:
         axis.text(
-            0.72,
-            box_y[key],
+            box_x,
+            max(final_rates[key] - 8.0, 7.0),
             f"{label}\ny={final_rates[key]:.1f}%",
-            transform=axis.transAxes,
             va="center",
             ha="left",
             bbox={"boxstyle": "round,pad=0.35", "fc": "white", "ec": "#222222", "lw": 1.2},

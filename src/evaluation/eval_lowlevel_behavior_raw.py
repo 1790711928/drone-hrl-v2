@@ -62,6 +62,8 @@ BEHAVIOR_METRICS = [
     "vertical_safe_ratio",
 ]
 DIAGNOSTIC_METRICS = [
+    "m_turn",
+    "g_v",
     "threat_forward_early_mean",
     "threat_forward_late_mean",
     "threat_forward_improvement",
@@ -514,6 +516,14 @@ def run_paired_episode(
     rear_away_trace = rear_away_displacement_trace(initial_state, state_trace)
     path_length, rear_away_net, rear_efficiency = rear_escape_efficiency(initial_state, state_trace)
     vertical_away_trace = vertical_away_displacement_trace(initial_state, state_trace)
+    # Chapter 3 rear-escape indicators.  ``threat_forward`` and
+    # ``threat_right`` are the normalized projections q_f and q_r used by
+    # the environment's local threat frame.
+    m_turn = mean_or_zero(
+        abs(q_right) * max(-q_forward, 0.0)
+        for q_forward, q_right in zip(threat_forward, threat_right)
+    )
+    g_v = state.evader.speed - initial_state.evader.speed
     rear_gap_early = mean_or_zero(early_window(rear_gaps))
     rear_gap_late = mean_or_zero(late_window(rear_gaps))
     side_gap_early = mean_or_zero(early_window(side_gaps))
@@ -589,6 +599,8 @@ def run_paired_episode(
         "vertical_away_displacement_late_mean": vertical_away_late,
         "vertical_away_displacement_gain": vertical_away_late - vertical_away_early,
         "vertical_away_net_displacement": vertical_away_trace[-1] if vertical_away_trace else 0.0,
+        "m_turn": m_turn,
+        "g_v": g_v,
         **initial_state_fields,
         **metrics,
     }

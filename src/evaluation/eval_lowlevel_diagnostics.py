@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,7 +32,7 @@ class EvalResult:
     out_of_bounds_rate: float
 
 
-def evaluate_model_on_scenario(model, scenario: str, episodes: int) -> EvalResult:
+def evaluate_model_on_scenario(model, scenario: str, episodes: int, seed: int) -> EvalResult:
     from src.training.sac_env import PursuitEscapeGymEnv
 
     successes = 0
@@ -41,20 +42,27 @@ def evaluate_model_on_scenario(model, scenario: str, episodes: int) -> EvalResul
     rewards: list[float] = []
     steps: list[int] = []
 
-    for _ in range(episodes):
+    for episode_index in range(episodes):
         env = PursuitEscapeGymEnv(scenario=scenario)
-        obs, _ = env.reset()
-        done = False
-        ep_reward = 0.0
-        ep_steps = 0
-        info = {"outcome": "timeout"}
+        try:
+            # The underlying pursuit environment uses Python's RNG for reset
+            # jitter.  Seed it per episode so every policy sees the same
+            # scenario realizations within a row of the matrix.
+            random.seed(seed + episode_index)
+            obs, _ = env.reset(seed=seed + episode_index)
+            done = False
+            ep_reward = 0.0
+            ep_steps = 0
+            info = {"outcome": "timeout"}
 
-        while not done:
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
-            ep_reward += reward
-            ep_steps += 1
-            done = terminated or truncated
+            while not done:
+                action, _ = model.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, info = env.step(action)
+                ep_reward += reward
+                ep_steps += 1
+                done = terminated or truncated
+        finally:
+            env.close()
 
         outcome = str(info.get("outcome", "timeout"))
         if outcome == "escaped":
@@ -91,11 +99,22 @@ def save_csv(rows: list[dict[str, str | float]], out_path: Path) -> None:
         "capture_rate",
         "timeout_rate",
         "out_of_bounds_rate",
+        "episodes",
+        "seed",
     ]
     with out_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def save_matrix_csv(success_matrix: list[list[float]], out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["scenario"] + [f"pi{i}" for i in range(1, 5)])
+        for scenario, values in zip(SCENARIOS, success_matrix):
+            writer.writerow([scenario] + [f"{value:.6f}" for value in values])
 
 
 def maybe_save_heatmap(success_matrix: list[list[float]], out_path: Path) -> None:
@@ -113,15 +132,24 @@ def maybe_save_heatmap(success_matrix: list[list[float]], out_path: Path) -> Non
 
     ax.set_xticks(range(4), labels=[f"pi{i}" for i in range(1, 5)])
     ax.set_yticks(range(4), labels=[f"S{i}" for i in range(1, 5)])
-    ax.set_xlabel("Policy")
-    ax.set_ylabel("Scenario")
-    ax.set_title("Low-level SAC Success Matrix")
+    ax.set_xlabel("Low-level policy")
+    ax.set_ylabel("Threat scenario")
+    ax.set_title("4×4 low-level SAC escape-rate matrix")
 
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
-            ax.text(j, i, f"{data[i, j]:.2f}", ha="center", va="center", color="white")
+            value = data[i, j]
+            ax.text(
+                j,
+                i,
+                f"{100.0 * value:.1f}%",
+                ha="center",
+                va="center",
+                color="white" if value < 0.55 else "black",
+                fontweight="bold",
+            )
 
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Success Rate")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Escape rate")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -151,9 +179,19 @@ def print_diagonal_dominance(success_matrix: list[list[float]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Low-level SAC diagnostics (4x4 matrix + dominance checks)")
-    parser.add_argument("--episodes", type=int, default=30)
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
+    parser.add_argument("--model-1", default=None, help="Frozen pi1 checkpoint; overrides --checkpoint-dir")
+    parser.add_argument("--model-2", default=None, help="Frozen pi2 checkpoint; overrides --checkpoint-dir")
+    parser.add_argument("--model-3", default=None, help="Frozen pi3 checkpoint; overrides --checkpoint-dir")
+    parser.add_argument("--model-4", default=None, help="Frozen pi4 checkpoint; overrides --checkpoint-dir")
+    parser.add_argument("--episodes", type=int, default=200)
+    parser.add_argument("--seed", type=int, default=10000)
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--output-dir", default="outputs/evaluation/lowlevel_4x4")
     args = parser.parse_args()
+
+    if args.episodes <= 0:
+        parser.error("--episodes must be positive")
 
     try:
         from stable_baselines3 import SAC
@@ -163,14 +201,18 @@ def main() -> None:
         ) from exc
 
     checkpoint_dir = Path(args.checkpoint_dir)
-    model_paths = [checkpoint_dir / filename for filename in MODEL_FILENAMES]
+    explicit_paths = [args.model_1, args.model_2, args.model_3, args.model_4]
+    model_paths = [
+        Path(path) if path else checkpoint_dir / filename
+        for path, filename in zip(explicit_paths, MODEL_FILENAMES)
+    ]
     for path in model_paths:
         if not path.exists():
             print(f"Missing checkpoint: {path}")
             print("Please run this script locally after training low-level SAC policies.")
             return
 
-    models = [SAC.load(str(path)) for path in model_paths]
+    models = [SAC.load(str(path), device=args.device) for path in model_paths]
 
     print("=== Low-level Diagnostics Matrix ===")
     rows: list[dict[str, str | float]] = []
@@ -179,7 +221,12 @@ def main() -> None:
     for i, scenario in enumerate(SCENARIOS, start=1):
         row_results: list[EvalResult] = []
         for j, model in enumerate(models, start=1):
-            result = evaluate_model_on_scenario(model, scenario, args.episodes)
+            result = evaluate_model_on_scenario(
+                model,
+                scenario,
+                args.episodes,
+                seed=args.seed + (i - 1) * args.episodes,
+            )
             row_results.append(result)
             rows.append(
                 {
@@ -191,6 +238,8 @@ def main() -> None:
                     "capture_rate": result.capture_rate,
                     "timeout_rate": result.timeout_rate,
                     "out_of_bounds_rate": result.out_of_bounds_rate,
+                    "episodes": args.episodes,
+                    "seed": args.seed + (i - 1) * args.episodes,
                 }
             )
 
@@ -206,11 +255,16 @@ def main() -> None:
         )
         print(f"S{i}({scenario}) -> {row_line}")
 
-    out_csv = Path("outputs/evaluation/lowlevel_diagnostics.csv")
+    output_dir = Path(args.output_dir)
+    out_csv = output_dir / "lowlevel_diagnostics.csv"
     save_csv(rows, out_csv)
     print(f"\n[csv] saved: {out_csv}")
 
-    out_img = Path("outputs/evaluation/lowlevel_success_matrix.png")
+    matrix_csv = output_dir / "lowlevel_success_matrix.csv"
+    save_matrix_csv(success_matrix, matrix_csv)
+    print(f"[matrix] saved: {matrix_csv}")
+
+    out_img = output_dir / "lowlevel_success_matrix.png"
     maybe_save_heatmap(success_matrix, out_img)
 
     print_diagonal_dominance(success_matrix)

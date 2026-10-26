@@ -1,0 +1,17 @@
+scenario,scenario_label,policy,indicator_1,indicator_2,episode_count,validity_rate,indicator_1_raw_mean,indicator_2_raw_mean,indicator_1_normalized_mean,indicator_2_normalized_mean,behavior_score
+rear_close_threat,S1_rear_approach,pi1,rear_gap_gain,rear_gap_non_decreasing_ratio,5,1.0,-27.7276712305119,0.06443466269032136,0.412530497469406,0.1242668494741912,0.2683986734717986
+rear_close_threat,S1_rear_approach,pi2,rear_gap_gain,rear_gap_non_decreasing_ratio,5,1.0,-34.36715993250952,0.0,0.27174924764669073,0.0,0.13587462382334536
+rear_close_threat,S1_rear_approach,pi3,rear_gap_gain,rear_gap_non_decreasing_ratio,5,0.0,-22.673200042147617,0.0374250299880048,0.5197036252550948,0.07217684354829498,0.0
+rear_close_threat,S1_rear_approach,pi4,rear_gap_gain,rear_gap_non_decreasing_ratio,5,0.8,-22.64865749752076,0.02128060263653484,0.5202240162462504,0.04104116222760291,0.19070243252102986
+flank_threat,S2_lateral_threat,pi1,side_gap_gain,side_gap_non_decreasing_ratio,5,1.0,-25.619068247195028,0.22334810262195867,0.11263526627903431,0.27918512827744835,0.19591019727824133
+flank_threat,S2_lateral_threat,pi2,side_gap_gain,side_gap_non_decreasing_ratio,5,0.8,8.268229161168891,0.6276087208084501,0.7338362244519642,0.7845109010105626,0.6108456865807026
+flank_threat,S2_lateral_threat,pi3,side_gap_gain,side_gap_non_decreasing_ratio,5,0.4,-11.00923660676649,0.325555822741326,0.3804536557012425,0.4069447784266575,0.09565536075498987
+flank_threat,S2_lateral_threat,pi4,side_gap_gain,side_gap_non_decreasing_ratio,5,1.0,-23.644193394746647,0.17025491078122656,0.14883744952867184,0.2128186384765332,0.1808280440026025
+boundary_constrained,S3_boundary_constraint,pi1,boundary_margin_gain,safe_boundary_ratio,5,0.0,-0.11387919913630623,0.0,0.3352624912377411,0.0,0.0
+boundary_constrained,S3_boundary_constraint,pi2,boundary_margin_gain,safe_boundary_ratio,5,0.2,-0.10457902503072247,0.021621621621621623,0.34686173799328246,0.02199440820130475,0.03626548775861577
+boundary_constrained,S3_boundary_constraint,pi3,boundary_margin_gain,safe_boundary_ratio,5,1.0,0.33981890089123873,0.24755282484346525,0.9011181574859869,0.25182097699593875,0.5764695672409629
+boundary_constrained,S3_boundary_constraint,pi4,boundary_margin_gain,safe_boundary_ratio,5,0.0,-0.10951085942146409,0.0,0.34071071722676466,0.0,0.0
+vertical_z_threat,S4_vertical_threat,pi1,vertical_away_displacement_gain,distance_gain,5,1.0,10.982106633025781,24.563648047042506,0.651268085066523,0.5696322374856798,0.6104501612761014
+vertical_z_threat,S4_vertical_threat,pi2,vertical_away_displacement_gain,distance_gain,5,0.0,27.304125145202544,0.044086225149091975,0.8736705142199662,0.15159372847998617,0.0
+vertical_z_threat,S4_vertical_threat,pi3,vertical_away_displacement_gain,distance_gain,5,0.8,-2.7593286543884337,17.800936458318734,0.46402846236325307,0.45433352660654297,0.401689442328272
+vertical_z_threat,S4_vertical_threat,pi4,vertical_away_displacement_gain,distance_gain,5,1.0,17.163966733600567,30.723175055876816,0.7355015824142249,0.6746471437738607,0.7050743630940428

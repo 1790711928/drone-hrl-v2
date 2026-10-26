@@ -1,0 +1,27 @@
+{
+  "input_csv": "outputs/paper_eval_core/final_directional_diag/behavior_metrics_raw.csv",
+  "episode_rows": 80,
+  "cells": 16,
+  "metric_pairs": {
+    "rear_close_threat": [
+      "rear_gap_gain",
+      "rear_gap_non_decreasing_ratio"
+    ],
+    "flank_threat": [
+      "side_gap_gain",
+      "side_gap_non_decreasing_ratio"
+    ],
+    "boundary_constrained": [
+      "boundary_margin_gain",
+      "safe_boundary_ratio"
+    ],
+    "vertical_z_threat": [
+      "vertical_away_displacement_gain",
+      "distance_gain"
+    ]
+  },
+  "normalization": "global_observed_minmax",
+  "validity_field": "task_valid",
+  "heatmap_generated": true,
+  "all_four_diagonal_targets_best": true
+}

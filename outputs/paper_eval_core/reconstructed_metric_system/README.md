@@ -12,6 +12,10 @@ generating a heatmap.
 - `eval_reconstructed_behavior.py`: paired deterministic trajectory evaluator.
 - `score_reconstructed_matrix.py`: normalization, `V`, per-episode score, and
   4×4 CSV summaries.
+- `reproduce_historical_directional_score.py`: reproduces a score matrix from
+  the saved 2026-10-08 directional raw CSV without rerunning models.
+- `plot_historical_score_heatmap.py`: creates an annotated heatmap only after
+  the score matrix has passed review.
 - `reports/`: reserved for run-specific reports; no existing output directory
   is used.
 
@@ -49,6 +53,27 @@ $out = "$recon\runs\baseline_20261025"
 The evaluator refuses to write into a non-empty output directory. Use a new
 run directory for every parameter change. The scripts do not know or alter the
 locations of existing models; model paths are supplied explicitly.
+
+To score the saved historical directional export, use a new output directory:
+
+```powershell
+& $py "$recon\reproduce_historical_directional_score.py" `
+  --input-csv "$repo\outputs\paper_eval_core\final_directional_diag\behavior_metrics_raw.csv" `
+  --output-dir "$recon\runs\historical_final_directional_score_v1"
+```
+
+This command uses the saved raw data, the directional metric pairs, global
+observed min–max normalization, and the saved `task_valid` field. It writes a
+reviewable matrix and report but does not create a heatmap.
+
+After reviewing `historical_score_report.md` and confirming the diagonal check,
+create the figure with:
+
+```powershell
+& $py "$recon\plot_historical_score_heatmap.py" `
+  --matrix-csv "$recon\runs\historical_final_directional_score_v1\historical_score_matrix.csv" `
+  --output-png "$recon\runs\historical_final_directional_score_v1\historical_behavior_score_heatmap.png"
+```
 
 ## Outputs
 

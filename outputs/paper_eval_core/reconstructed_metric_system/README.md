@@ -15,6 +15,10 @@ generating a heatmap.
 - `reports/`: reserved for run-specific reports; no existing output directory
   is used.
 
+`metric_config.yaml` is written in JSON-compatible YAML. The scripts use
+PyYAML when available and automatically fall back to Python's standard-library
+JSON parser, so the project virtual environment does not need an extra package.
+
 ## Run order
 
 Run from the repository root with the project virtual environment:

@@ -1,63 +1,35 @@
-# Independent reconstruction of the Chapter 3 behavior score.
-# Values marked ASSUMPTION are reconstruction choices, not recovered historical facts.
-
-schema_version: reconstructed_metric_system_v1
-policies: [pi1, pi2, pi3, pi4]
-scenarios:
-  - id: rear_close_threat
-    label: S1_rear_approach
-    target_policy: pi1
-    metric_pair: [M_turn, G_v]
-  - id: flank_threat
-    label: S2_lateral_threat
-    target_policy: pi2
-    metric_pair: [G_s, R_s]
-  - id: boundary_constrained
-    label: S3_boundary_constraint
-    target_policy: pi3
-    metric_pair: [G_b, R_b]
-  - id: vertical_z_threat
-    label: S4_vertical_threat
-    target_policy: pi4
-    metric_pair: [G_z, G_d]
-
-evaluation:
-  paired_initial_state: true
-  deterministic_action: true
-  episodes: 100
-  seed: 20261025
-  early_fraction: 0.20
-  late_fraction: 0.20
-  # The evaluator uses the environment's existing TerminationConfig unchanged.
-  same_environment_termination: true
-
-validity:
-  # ASSUMPTION: only an explicit escaped outcome is a valid task completion.
-  mode: escaped_only
-  escaped_value: 1.0
-  failed_value: 0.0
-
-normalization:
-  # ASSUMPTION: fixed cross-policy bounds. These are never fitted per policy
-  # or per scenario. Values are clipped to [0, 1] after affine mapping.
-  clip: true
-  bounds:
-    M_turn: {lower: 0.0, upper: 1.0, status: ASSUMPTION}
-    G_v:    {lower: -5.0, upper: 5.0, status: ASSUMPTION}
-    G_s:    {lower: -1.0, upper: 1.0, status: ASSUMPTION}
-    R_s:    {lower: 0.0, upper: 1.0, status: ASSUMPTION}
-    G_b:    {lower: -1.0, upper: 1.0, status: ASSUMPTION}
-    R_b:    {lower: 0.0, upper: 1.0, status: ASSUMPTION}
-    G_z:    {lower: -10.0, upper: 10.0, status: ASSUMPTION}
-    G_d:    {lower: -20.0, upper: 20.0, status: ASSUMPTION}
-
-thresholds:
-  # ASSUMPTION inherited as a protocol value from the environment's raw
-  # boundary diagnostic convention; this is not a recovered composite-score
-  # threshold.
-  safe_boundary_margin: 0.35
-
-aggregation:
-  # Per-episode score is computed first, then means are reported by cell.
-  per_episode_then_cell_mean: true
-  matrix_value: mean_episode_score
+{
+  "schema_version": "reconstructed_metric_system_v1",
+  "policies": ["pi1", "pi2", "pi3", "pi4"],
+  "scenarios": [
+    {"id": "rear_close_threat", "label": "S1_rear_approach", "target_policy": "pi1", "metric_pair": ["M_turn", "G_v"]},
+    {"id": "flank_threat", "label": "S2_lateral_threat", "target_policy": "pi2", "metric_pair": ["G_s", "R_s"]},
+    {"id": "boundary_constrained", "label": "S3_boundary_constraint", "target_policy": "pi3", "metric_pair": ["G_b", "R_b"]},
+    {"id": "vertical_z_threat", "label": "S4_vertical_threat", "target_policy": "pi4", "metric_pair": ["G_z", "G_d"]}
+  ],
+  "evaluation": {
+    "paired_initial_state": true,
+    "deterministic_action": true,
+    "episodes": 100,
+    "seed": 20261025,
+    "early_fraction": 0.20,
+    "late_fraction": 0.20,
+    "same_environment_termination": true
+  },
+  "validity": {"mode": "escaped_only", "escaped_value": 1.0, "failed_value": 0.0},
+  "normalization": {
+    "clip": true,
+    "bounds": {
+      "M_turn": {"lower": 0.0, "upper": 1.0, "status": "ASSUMPTION"},
+      "G_v": {"lower": -5.0, "upper": 5.0, "status": "ASSUMPTION"},
+      "G_s": {"lower": -1.0, "upper": 1.0, "status": "ASSUMPTION"},
+      "R_s": {"lower": 0.0, "upper": 1.0, "status": "ASSUMPTION"},
+      "G_b": {"lower": -1.0, "upper": 1.0, "status": "ASSUMPTION"},
+      "R_b": {"lower": 0.0, "upper": 1.0, "status": "ASSUMPTION"},
+      "G_z": {"lower": -10.0, "upper": 10.0, "status": "ASSUMPTION"},
+      "G_d": {"lower": -20.0, "upper": 20.0, "status": "ASSUMPTION"}
+    }
+  },
+  "thresholds": {"safe_boundary_margin": 0.35},
+  "aggregation": {"per_episode_then_cell_mean": true, "matrix_value": "mean_episode_score"}
+}

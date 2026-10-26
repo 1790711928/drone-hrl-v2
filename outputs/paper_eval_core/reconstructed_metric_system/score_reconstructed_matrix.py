@@ -21,7 +21,10 @@ REPO_ROOT = BASE_DIR.parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import yaml
+try:
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - exercised in minimal venvs
+    yaml = None
 
 
 POLICIES = ["pi1", "pi2", "pi3", "pi4"]
@@ -30,7 +33,10 @@ RAW_FIELDS = ["M_turn", "G_v", "G_s", "R_s", "G_b", "R_b", "G_z", "G_d"]
 
 def load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle)
+        if yaml is not None:
+            payload = yaml.safe_load(handle)
+        else:
+            payload = json.load(handle)
     if not isinstance(payload, dict):
         raise ValueError(f"configuration root must be a mapping: {path}")
     return payload

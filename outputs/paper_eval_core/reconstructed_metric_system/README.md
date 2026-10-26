@@ -75,6 +75,19 @@ create the figure with:
   --output-png "$recon\runs\historical_final_directional_score_v1\historical_behavior_score_heatmap.png"
 ```
 
+For the review-only contrast-enhanced display (the raw score matrix is not
+changed), use the softmax plotter. `--beta 8` increases within-scenario
+separation and `--scale 100` displays the relative values as 0--100 scores:
+
+```powershell
+& $py "$recon\plot_historical_score_softmax.py" `
+  --matrix-csv "$recon\frozen_historical_directional_score_v1\historical_score_matrix.csv" `
+  --output-png "$recon\frozen_historical_directional_score_v1\historical_behavior_score_heatmap_softmax_beta8_x100.png" `
+  --output-csv "$recon\frozen_historical_directional_score_v1\historical_score_softmax_beta8_x100.csv" `
+  --beta 8 `
+  --scale 100
+```
+
 ## Outputs
 
 `episodes_raw.csv` contains one row per policy/scenario/episode, including the

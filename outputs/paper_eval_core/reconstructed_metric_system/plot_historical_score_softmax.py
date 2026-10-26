@@ -88,11 +88,6 @@ def main() -> None:
     )
     ax.set_xlabel("Low-level policy", fontsize=13)
     ax.set_ylabel("Threat scenario", fontsize=13)
-    ax.set_title(
-        f"Directional behavior relative score (scale={args.scale:g})",
-        fontsize=14,
-        pad=14,
-    )
 
     for row_index in range(len(rows)):
         for column_index in range(len(POLICIES)):
@@ -108,10 +103,7 @@ def main() -> None:
             )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
-    colorbar.set_label(
-        "Relative score (softmax, β={:.1f}) × {:.0f}".format(args.beta, args.scale),
-        fontsize=11,
-    )
+    colorbar.set_label("Matching score", fontsize=11)
     fig.savefig(args.output_png, dpi=240, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved contrast matrix to {args.output_csv}")

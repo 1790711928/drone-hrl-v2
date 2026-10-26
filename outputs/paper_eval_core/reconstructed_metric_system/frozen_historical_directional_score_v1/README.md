@@ -19,5 +19,12 @@ The resulting matrix has all four target policies highest in their matching
 scenario. The PNG is generated from the saved matrix and contains the numeric
 cell values; it is a frozen candidate for the paper heatmap.
 
+The companion `historical_behavior_score_heatmap_relative_percent.png` keeps
+the absolute score visible as `100 * S` (the first number in each cell), while
+the color and parenthesized number use the within-scenario relative score
+`100 * S / max_j(S_ij)`. This is a visualization of specialization, not a
+replacement for the absolute score matrix. The corresponding values are saved
+in `historical_score_relative_percent.csv`.
+
 This directory contains derived results only. The original historical raw CSV
 and workbook remain in the user's local `final_directional_diag` directory.

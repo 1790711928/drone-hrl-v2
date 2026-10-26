@@ -1,0 +1,113 @@
+"""Plot an honest absolute-plus-relative percentage view of the score matrix.
+
+The underlying score is unchanged.  The color and the parenthesized number
+show each scenario's score relative to that row's best policy, while the first
+number is the original normalized score expressed on a 0--100 scale.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+from pathlib import Path
+
+
+POLICIES = ["pi1", "pi2", "pi3", "pi4"]
+SCENARIO_LABELS = {
+    "rear_close_threat": "S1 rear",
+    "flank_threat": "S2 lateral",
+    "boundary_constrained": "S3 boundary",
+    "vertical_z_threat": "S4 vertical",
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--matrix-csv", type=Path, required=True)
+    parser.add_argument("--output-png", type=Path, required=True)
+    parser.add_argument("--output-csv", type=Path, required=True)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if not args.matrix_csv.is_file():
+        raise FileNotFoundError(args.matrix_csv)
+
+    with args.matrix_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    expected = {"scenario", *POLICIES}
+    if not rows or set(rows[0]) != expected:
+        raise ValueError("matrix CSV must contain scenario, pi1, pi2, pi3, pi4")
+
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except Exception as exc:
+        raise RuntimeError("matplotlib and numpy are required") from exc
+
+    absolute = np.array(
+        [[float(row[policy]) for policy in POLICIES] for row in rows], dtype=float
+    )
+    row_max = absolute.max(axis=1, keepdims=True)
+    relative = np.divide(
+        absolute,
+        row_max,
+        out=np.zeros_like(absolute),
+        where=row_max > 0,
+    ) * 100.0
+    absolute_percent = absolute * 100.0
+
+    args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+    with args.output_csv.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["scenario", "policy", "absolute_score_percent", "relative_score_percent"])
+        for row_index, row in enumerate(rows):
+            for column_index, policy in enumerate(POLICIES):
+                writer.writerow(
+                    [
+                        row["scenario"],
+                        policy,
+                        f"{absolute_percent[row_index, column_index]:.6f}",
+                        f"{relative[row_index, column_index]:.6f}",
+                    ]
+                )
+
+    args.output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(8.2, 6.4), constrained_layout=True)
+    image = ax.imshow(relative, cmap="YlGnBu", vmin=0.0, vmax=100.0, aspect="auto")
+    ax.set_xticks(range(4), labels=["π1", "π2", "π3", "π4"], fontsize=12)
+    ax.set_yticks(
+        range(len(rows)),
+        labels=[SCENARIO_LABELS.get(row["scenario"], row["scenario"]) for row in rows],
+        fontsize=12,
+    )
+    ax.set_xlabel("Low-level policy", fontsize=13)
+    ax.set_ylabel("Threat scenario", fontsize=13)
+    ax.set_title("Directional behavior score: absolute / relative (%)", fontsize=14, pad=14)
+
+    for row_index in range(len(rows)):
+        for column_index in range(len(POLICIES)):
+            value = relative[row_index, column_index]
+            label = f"{absolute_percent[row_index, column_index]:.1f}\n({value:.0f})"
+            ax.text(
+                column_index,
+                row_index,
+                label,
+                ha="center",
+                va="center",
+                color="white" if value < 52 else "black",
+                fontsize=11,
+                fontweight="bold",
+            )
+
+    colorbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    colorbar.set_label("Relative score within scenario (%)", fontsize=11)
+    fig.savefig(args.output_png, dpi=240, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved relative percentage matrix to {args.output_csv}")
+    print(f"Saved heatmap to {args.output_png}")
+
+
+if __name__ == "__main__":
+    main()

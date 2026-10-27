@@ -1,0 +1,108 @@
+{
+  "extraction_date": "2026-10-27",
+  "scope": "Code/configuration parameter extraction only; no training, full evaluation, image audit, or heatmap modification.",
+  "tables": {
+    "table_4_1_environment": {
+      "status": "UNVERIFIED",
+      "evidence": ["configs/env.yaml", "src/env/pursuit_escape_env.py", "src/env/scenarios.py", "src/env/termination.py"],
+      "environment": {
+        "dimension": {"value": 3, "status": "CONFIRMED"},
+        "dt": {"value": 0.1, "unit": "s", "status": "CONFIRMED"},
+        "bounds": {"x": [-50, 50], "y": [-50, 50], "z": [0, 50], "status": "CONFIRMED"},
+        "max_episode_steps": {"value": 600, "status": "CONFIRMED"},
+        "capture_distance": {"value": 2.5, "condition": "distance < threshold for 4 consecutive steps", "status": "CONFIRMED"},
+        "safe_distance": {"value": 26.0, "condition": "distance > threshold, closing_speed <= 0 and LOS condition for 8 consecutive steps", "status": "CONFIRMED"},
+        "pursuer_speed_ratio": {"value": 1.2, "status": "DEFAULT"},
+        "evader_speed_range": {"value": [2.0, 20.0], "status": "CONFIRMED"},
+        "pursuer_speed_range": {"value": [2.0, 25.0], "status": "CONFIRMED"},
+        "yaw_rate_max": {"value": 1.0, "status": "CONFIRMED"},
+        "pitch_rate_max": {"value": 0.7, "status": "CONFIRMED"}
+      },
+      "random_initialization": {
+        "position_xy_offset": "uniform ±3.0",
+        "position_z_offset": "uniform ±1.5",
+        "speed_offset": "uniform ±1.0 then clipped",
+        "yaw_offset": "uniform ±0.15",
+        "pitch_offset": "uniform ±0.08",
+        "status": "CONFIRMED code behavior; actual experiment usage UNVERIFIED"
+      },
+      "static_scenario_representatives": {
+        "rear_close_threat": {"evader": {"position": [0, 0, 12], "pitch": 0, "yaw": 0.2, "speed": 10}, "pursuer": {"position": [-6, 0, 12], "pitch": 0, "yaw": 0, "speed": 11.5}, "distance": 6.0, "azimuth_deg": 180.0},
+        "flank_threat": {"evader": {"position": [0, 0, 10], "pitch": 0, "yaw": 0, "speed": 9.5}, "pursuer": {"position": [-8, 8, 10], "pitch": 0, "yaw": -0.3, "speed": 11}, "distance": 11.314, "azimuth_deg": 135.0},
+        "boundary_constrained": {"evader": {"position": [46, 0, 8], "pitch": 0, "yaw": 0.8, "speed": 9}, "pursuer": {"position": [30, -10, 8], "pitch": 0, "yaw": 0.5, "speed": 10.5}, "distance": 18.868, "azimuth_deg": -147.99},
+        "vertical_z_threat": {"evader": {"position": [0, 0, 18], "pitch": 0.16, "yaw": 0, "speed": 10}, "pursuer": {"position": [-3, 1, 3], "pitch": 0.18, "yaw": 0.05, "speed": 11}, "distance": 15.33, "azimuth_deg": 161.57}
+      },
+      "representative_value_caveat": "Static scenario values are not universal randomized-run values."
+    },
+    "table_4_2_sac": {
+      "status": "UNVERIFIED",
+      "evidence": ["src/training/train_lowlevel.py", "src/training/train_lowlevel_all.py", "configs/train_lowlevel.yaml"],
+      "experts": ["pi1_rear", "pi2_flank", "pi3_boundary", "pi4_vertical"],
+      "shared": {
+        "algorithm": {"value": "SAC", "status": "CONFIRMED"},
+        "batch_size": {"value": 256, "status": "CONFIRMED"},
+        "learning_starts": {"value": 1000, "status": "CONFIRMED"},
+        "train_freq": {"value": 1, "status": "CONFIRMED"},
+        "gradient_steps": {"value": 1, "status": "CONFIRMED"},
+        "policy": {"value": "MlpPolicy", "status": "CONFIRMED"},
+        "timesteps_default": {"value": 50000, "status": "DEFAULT"},
+        "seed_default": {"value": 0, "status": "DEFAULT"},
+        "checkpoint_frequency_default": {"value": 5000, "status": "DEFAULT"},
+        "episode_max_steps": {"value": 600, "status": "CONFIRMED"},
+        "reward_logging": {"value": ["episode_rewards.csv", "monitor.csv", "TensorBoard directory"], "status": "CONFIRMED"}
+      },
+      "not_explicitly_defined": {
+        "learning_rate": "MISSING",
+        "gamma": "MISSING",
+        "tau": "MISSING",
+        "replay_buffer_size": "MISSING",
+        "entropy_coefficient": "MISSING",
+        "automatic_entropy_tuning": "UNVERIFIED",
+        "actor_network": "UNVERIFIED",
+        "critic_network": "UNVERIFIED",
+        "default_episode_count": "MISSING"
+      },
+      "expert_specific_overrides": {"status": "MISSING", "value": "No expert-specific hyperparameter block found."},
+      "conflicts": ["README example uses 40000 timesteps while current training-script default is 50000."]
+    },
+    "table_4_3_ppo": {
+      "status": "UNVERIFIED",
+      "evidence": ["src/training/train_highlevel.py", "configs/train_highlevel.yaml"],
+      "explicit": {
+        "algorithm": {"value": "PPO", "status": "CONFIRMED"},
+        "learning_rate": {"value": 0.0003, "status": "CONFIRMED"},
+        "gamma": {"value": 0.99, "status": "CONFIRMED"},
+        "batch_size": {"value": 256, "status": "CONFIRMED"},
+        "rollout_length_n_steps": {"value": 1024, "status": "CONFIRMED"},
+        "timesteps_default": {"value": 80000, "status": "DEFAULT"},
+        "seed_default": {"value": 0, "status": "DEFAULT"},
+        "checkpoint_frequency_default": {"value": 5000, "status": "DEFAULT"},
+        "reward_logging": {"value": ["episode_rewards.csv", "monitor.csv", "TensorBoard directory"], "status": "CONFIRMED"},
+        "option_duration": {"value": 8, "status": "DEFAULT"},
+        "switch_penalty": {"value": 0.02, "status": "DEFAULT"}
+      },
+      "not_explicitly_defined": {
+        "gae_lambda": "MISSING",
+        "clip_range": "MISSING",
+        "entropy_coefficient": "MISSING",
+        "value_loss_coefficient": "MISSING",
+        "minibatch_count": "UNVERIFIED",
+        "update_count": "MISSING",
+        "actor_network": "UNVERIFIED",
+        "critic_network": "UNVERIFIED",
+        "default_episode_count": "MISSING"
+      },
+      "comparison_with_sac": {"default_timesteps": "PPO 80000 vs SAC 50000", "episodes": "Neither fixes a default episode count", "io": "Shared 25D source observation; SAC 3D continuous action; PPO 4-way discrete action", "network": "Both MlpPolicy, explicit layer structure absent"}
+    }
+  },
+  "observation_action_text": {
+    "source_dimension": 25,
+    "readme_dimension": 21,
+    "categories": ["relative geometry and distance", "speed/closing speed", "attitude encoding", "line-of-sight", "boundary margins", "normalized progress/position", "body-frame threat direction"],
+    "sac_action": {"dimension": 3, "meaning": ["acceleration", "yaw rate", "pitch rate"]},
+    "ppo_action": {"count": 4, "mapping": ["pi1 rear", "pi2 flank", "pi3 boundary", "pi4 vertical"]},
+    "preprocessing": "Partial component normalization/clipping and sin/cos encoding; no single global standardization declaration.",
+    "writing_priority": "Use current source definition (25D) after confirming the final paper code version; preserve README discrepancy in revision notes."
+  },
+  "next_confirmation_only": ["Confirm paper's code/version for 21D vs 25D observation wording.", "Confirm which SAC timesteps (40000 README example or 50000 script default) belong in the final parameter table.", "Confirm actual seed/timestep values from the already-prepared experiment records if available." ]
+}

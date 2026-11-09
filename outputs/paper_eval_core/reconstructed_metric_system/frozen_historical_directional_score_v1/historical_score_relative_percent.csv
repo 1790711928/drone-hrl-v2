@@ -1,0 +1,17 @@
+scenario,policy,absolute_score_percent,relative_score_percent
+rear_close_threat,pi1,26.839900,100.000000
+rear_close_threat,pi2,13.587500,50.624257
+rear_close_threat,pi3,0.000000,0.000000
+rear_close_threat,pi4,19.070200,71.051681
+flank_threat,pi1,19.591000,32.071913
+flank_threat,pi2,61.084600,100.000000
+flank_threat,pi3,9.565500,15.659430
+flank_threat,pi4,18.082800,29.602879
+boundary_constrained,pi1,0.000000,0.000000
+boundary_constrained,pi2,3.626500,6.290874
+boundary_constrained,pi3,57.647000,100.000000
+boundary_constrained,pi4,0.000000,0.000000
+vertical_z_threat,pi1,61.045000,86.579565
+vertical_z_threat,pi2,0.000000,0.000000
+vertical_z_threat,pi3,40.168900,56.971183
+vertical_z_threat,pi4,70.507400,100.000000

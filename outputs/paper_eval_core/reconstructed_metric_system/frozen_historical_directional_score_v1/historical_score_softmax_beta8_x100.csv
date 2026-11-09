@@ -1,0 +1,17 @@
+scenario,policy,raw_score,relative_score,beta,scale
+rear_close_threat,pi1,0.268399,49.992543,8.000,100.000
+rear_close_threat,pi2,0.135875,17.316882,8.000,100.000
+rear_close_threat,pi3,0.000000,5.839714,8.000,100.000
+rear_close_threat,pi4,0.190702,26.850860,8.000,100.000
+flank_threat,pi1,0.195910,3.335452,8.000,100.000
+flank_threat,pi2,0.610846,92.212547,8.000,100.000
+flank_threat,pi3,0.095655,1.495661,8.000,100.000
+flank_threat,pi4,0.180828,2.956341,8.000,100.000
+boundary_constrained,pi1,0.000000,0.961559,8.000,100.000
+boundary_constrained,pi2,0.036265,1.285209,8.000,100.000
+boundary_constrained,pi3,0.576470,96.791673,8.000,100.000
+boundary_constrained,pi4,0.000000,0.961559,8.000,100.000
+vertical_z_threat,pi1,0.610450,30.051200,8.000,100.000
+vertical_z_threat,pi2,0.000000,0.227479,8.000,100.000
+vertical_z_threat,pi3,0.401689,5.656552,8.000,100.000
+vertical_z_threat,pi4,0.705074,64.064769,8.000,100.000

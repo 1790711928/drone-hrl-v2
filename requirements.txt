@@ -2,5 +2,6 @@ pytest>=8.0
 matplotlib>=3.8
 gymnasium>=0.29
 stable-baselines3>=2.3
+tensorboard>=2.14
 tqdm
 rich

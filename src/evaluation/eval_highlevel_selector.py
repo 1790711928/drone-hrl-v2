@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import random
 from collections import Counter
 from pathlib import Path
 
-from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, HighLevelOptionEnv
+from src.training.highlevel_env import (
+    CONTINUOUS_SCENARIO_SETS,
+    CONTINUOUS_SHOWCASE_SCENARIO,
+    SCRIPTED_SHOWCASE_SCENARIO,
+    STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS,
+    HighLevelOptionEnv,
+)
 
 
 def heuristic_option(
@@ -77,13 +84,19 @@ def continuous_diagnostic_option(info: dict, mode: str) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate fixed/random/heuristic/high-level selector on scenario sets")
+    parser = argparse.ArgumentParser(description="Evaluate fixed/random/expert/high-level selector on scenario sets")
     parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "highlevel", "continuous_heuristic", "regime_oracle", "scripted_showcase"], default="fixed")
+    parser.add_argument("--seed", type=int, default=10000)
+    parser.add_argument("--mode", choices=["fixed", "random", "heuristic", "expert", "highlevel", "continuous_heuristic", "regime_oracle", "scripted_showcase"], default="fixed")
     parser.add_argument("--fixed-policy", type=int, default=0)
     parser.add_argument("--high-model", default="outputs/checkpoints/ppo_highlevel_switch.zip")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="composite")
+    parser.add_argument("--low-model-1", default="")
+    parser.add_argument("--low-model-2", default="")
+    parser.add_argument("--low-model-3", default="")
+    parser.add_argument("--low-model-4", default="")
+    parser.add_argument("--output-dir", default="", help="Write per-episode raw results and summary CSVs.")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase", "structured_random_composite"], default="composite")
     parser.add_argument("--option-duration", type=int, default=8)
     parser.add_argument("--switch-penalty", type=float, default=0.02)
     parser.add_argument("--max-highlevel-steps", type=int, default=80)
@@ -92,7 +105,7 @@ def main() -> None:
     parser.add_argument("--flank-threshold", type=float, default=0.65)
     parser.add_argument("--vertical-threshold", type=float, default=0.55)
     parser.add_argument("--rear-distance-threshold", type=float, default=0.09)
-    parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--episode-lowlevel-steps", type=int, default=None, help="structured mode defaults to 240; other modes default to 400")
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
@@ -101,7 +114,43 @@ def main() -> None:
     parser.add_argument("--boundary-priority-exit", type=float, default=0.32)
     parser.add_argument("--showcase-bound-scale", type=float, default=2.5)
     parser.add_argument("--showcase-z-bound-scale", type=float, default=1.5)
+    parser.add_argument("--structured-position-jitter", type=float, default=2.0)
+    parser.add_argument("--structured-relative-jitter", type=float, default=1.5)
+    parser.add_argument("--structured-yaw-jitter", type=float, default=0.18)
+    parser.add_argument("--structured-pitch-jitter", type=float, default=0.04)
+    parser.add_argument("--structured-speed-jitter", type=float, default=0.5)
+    parser.add_argument("--structured-bound-scale", type=float, default=2.5)
+    parser.add_argument("--structured-z-bound-scale", type=float, default=1.5)
+    parser.add_argument("--success-window-lowlevel-steps", type=int, default=30)
+    parser.add_argument("--structured-escape-streak", type=int, default=8)
+    parser.add_argument(
+        "--structured-four-phase-only",
+        action="store_true",
+        help="For structured evaluation, sample only the four-phase schedules.",
+    )
+    parser.add_argument(
+        "--structured-phase-count",
+        type=int,
+        default=None,
+        help="For structured evaluation, generate cyclic schedules with this many phases.",
+    )
     args = parser.parse_args()
+    if args.episodes <= 0:
+        parser.error("--episodes must be positive")
+    explicit_count = sum(bool(path) for path in (args.low_model_1, args.low_model_2, args.low_model_3, args.low_model_4))
+    if explicit_count not in (0, 4):
+        parser.error("provide all four --low-model-* paths or none of them")
+    if args.success_window_lowlevel_steps <= 0:
+        parser.error("--success-window-lowlevel-steps must be positive")
+    if args.structured_escape_streak <= 0:
+        parser.error("--structured-escape-streak must be positive")
+    if args.structured_phase_count is not None and args.structured_phase_count <= 0:
+        parser.error("--structured-phase-count must be positive")
+    if args.structured_four_phase_only and args.structured_phase_count not in (None, 4):
+        parser.error("--structured-four-phase-only conflicts with --structured-phase-count")
+    random.seed(args.seed)
+    if args.episode_lowlevel_steps is None:
+        args.episode_lowlevel_steps = STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS if args.scenario_set == "structured_random_composite" else 400
     if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
 
@@ -113,12 +162,17 @@ def main() -> None:
     from stable_baselines3 import PPO, SAC
 
     ckpt_dir = Path(args.checkpoint_dir)
-    low_paths = [
-        ckpt_dir / "sac_low_1_rear_close_threat.zip",
-        ckpt_dir / "sac_low_2_flank_threat.zip",
-        ckpt_dir / "sac_low_3_boundary_constrained.zip",
-        ckpt_dir / "sac_low_4_vertical_z_threat.zip",
-    ]
+    explicit_low_paths = [args.low_model_1, args.low_model_2, args.low_model_3, args.low_model_4]
+    low_paths = (
+        [Path(path) for path in explicit_low_paths]
+        if all(explicit_low_paths)
+        else [
+            ckpt_dir / "sac_low_1_rear_close_threat.zip",
+            ckpt_dir / "sac_low_2_flank_threat.zip",
+            ckpt_dir / "sac_low_3_boundary_constrained.zip",
+            ckpt_dir / "sac_low_4_vertical_z_threat.zip",
+        ]
+    )
     for p in low_paths:
         if not p.exists():
             print(f"Missing checkpoint: {p}")
@@ -141,6 +195,17 @@ def main() -> None:
         boundary_priority_exit=args.boundary_priority_exit,
         showcase_bound_scale=args.showcase_bound_scale,
         showcase_z_bound_scale=args.showcase_z_bound_scale,
+        structured_position_jitter=args.structured_position_jitter,
+        structured_relative_jitter=args.structured_relative_jitter,
+        structured_yaw_jitter=args.structured_yaw_jitter,
+        structured_pitch_jitter=args.structured_pitch_jitter,
+        structured_speed_jitter=args.structured_speed_jitter,
+        structured_bound_scale=args.structured_bound_scale,
+        structured_z_bound_scale=args.structured_z_bound_scale,
+        success_window_lowlevel_steps=args.success_window_lowlevel_steps,
+        structured_escape_streak=args.structured_escape_streak,
+        structured_four_phase_only=args.structured_four_phase_only,
+        structured_phase_count=args.structured_phase_count,
     )
 
     high_model = None
@@ -175,9 +240,10 @@ def main() -> None:
     boundary_priority_rate_total = 0.0
     state_driven_switch_total = 0.0
     timeout = 0
+    episode_records: list[dict[str, object]] = []
 
-    for _ in range(args.episodes):
-        obs, info = env.reset(options={"scenario_set": args.scenario_set})
+    for episode_number in range(args.episodes):
+        obs, info = env.reset(seed=args.seed + episode_number, options={"scenario_set": args.scenario_set})
         scen = str(info.get("scenario_name", "unknown"))
         scenario_outcomes.setdefault(scen, {"escaped": 0, "captured": 0, "out_of_bounds": 0, "timeout": 0})
         scenario_option_usage.setdefault(scen, [0, 0, 0, 0])
@@ -198,7 +264,7 @@ def main() -> None:
                 action = int(max(0, min(3, args.fixed_policy)))
             elif args.mode == "random":
                 action = random.randint(0, 3)
-            elif args.mode == "heuristic":
+            elif args.mode in {"heuristic", "expert"}:
                 action = heuristic_option(
                     obs,
                     prev_option,
@@ -278,6 +344,17 @@ def main() -> None:
         else:
             timeout += 1
         scenario_outcomes[scen][outcome] = scenario_outcomes[scen].get(outcome, 0) + 1
+        episode_records.append(
+            {
+                "episode_index": len(episode_records) + 1,
+                "escaped": int(outcome == "escaped"),
+                "outcome": outcome,
+                "episode_return": ep_reward,
+                "episode_steps": ep_steps,
+                "scenario_name": scen,
+                "first_option": "" if not seq else f"pi{seq[0] + 1}",
+            }
+        )
 
     n = max(args.episodes, 1)
     usage_total = max(sum(option_usage), 1)
@@ -346,6 +423,33 @@ def main() -> None:
     print(f"avg_completed_phases={completed_phases_total / n:.3f}")
     print(f"phase_success_by_phase_type={phase_success_by_type}")
     print(f"phase_failure_by_phase_type={phase_failure_by_type}")
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        raw_path = output_dir / "highlevel_episode_raw.csv"
+        with raw_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(episode_records[0]))
+            writer.writeheader()
+            writer.writerows(episode_records)
+        summary_path = output_dir / "highlevel_win_rate.csv"
+        with summary_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["mode", "episodes", "win_rate", "capture_rate", "out_of_bounds_rate", "timeout_rate"],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "mode": args.mode,
+                    "episodes": args.episodes,
+                    "win_rate": succ / n,
+                    "capture_rate": cap / n,
+                    "out_of_bounds_rate": oob / n,
+                    "timeout_rate": timeout / n,
+                }
+            )
+        print(f"Wrote {raw_path}")
+        print(f"Wrote {summary_path}")
     if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"}:
         if succ / n > max(oob / n, cap / n):
             print("controllability_note=diagnostic selector is outperforming failure modes; continuous fine-tune is plausible.")

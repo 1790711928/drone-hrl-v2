@@ -158,10 +158,30 @@ def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState
 CONTINUOUS_PURSUIT_SCENARIO = "continuous_pursuit"
 CONTINUOUS_SHOWCASE_SCENARIO = "continuous_showcase"
 SCRIPTED_SHOWCASE_SCENARIO = "scripted_showcase"
-CONTINUOUS_SCENARIO_SETS = {CONTINUOUS_PURSUIT_SCENARIO, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO}
+STRUCTURED_RANDOM_COMPOSITE_SCENARIO = "structured_random_composite"
+STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS = 240
+STRUCTURED_DEFAULT_BOUND_SCALE = 2.5
+STRUCTURED_DEFAULT_Z_BOUND_SCALE = 1.5
+DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS = 30
+STRUCTURED_DEFAULT_ESCAPE_STREAK = 8
+CONTINUOUS_SCENARIO_SETS = {
+    CONTINUOUS_PURSUIT_SCENARIO,
+    CONTINUOUS_SHOWCASE_SCENARIO,
+    SCRIPTED_SHOWCASE_SCENARIO,
+    STRUCTURED_RANDOM_COMPOSITE_SCENARIO,
+}
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
 SCRIPTED_SHOWCASE_SCHEDULE = ("rear", "flank", "vertical", "boundary", "rear", "flank")
 SCRIPTED_SHOWCASE_DURATIONS = (60, 60, 60, 60, 80, 80, 100)
+STRUCTURED_COMPOSITE_SCHEDULES = (
+    ("rear", "flank", "boundary"),
+    ("flank", "vertical", "boundary"),
+    ("vertical", "rear", "boundary"),
+    ("boundary", "flank", "rear"),
+    ("rear", "vertical", "flank", "boundary"),
+    ("flank", "rear", "vertical", "boundary"),
+)
+STRUCTURED_PHASE_CYCLE = ("rear", "flank", "boundary", "vertical")
 CONTINUOUS_START_STATE = Env3DState(
     evader=Agent3DState(x=-5.0, y=0.0, z=14.0, speed=9.5, yaw=0.80, pitch=0.01),
     pursuer=Agent3DState(x=-18.0, y=-12.5, z=10.5, speed=11.0, yaw=0.80, pitch=0.03),
@@ -211,6 +231,20 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         boundary_priority_exit: float = 0.32,
         showcase_bound_scale: float = 2.5,
         showcase_z_bound_scale: float = 1.5,
+        structured_position_jitter: float = 2.0,
+        structured_relative_jitter: float = 1.5,
+        structured_yaw_jitter: float = 0.18,
+        structured_pitch_jitter: float = 0.04,
+        structured_speed_jitter: float = 0.5,
+        structured_bound_scale: float = STRUCTURED_DEFAULT_BOUND_SCALE,
+        structured_z_bound_scale: float = STRUCTURED_DEFAULT_Z_BOUND_SCALE,
+        success_window_lowlevel_steps: int = DEFAULT_SUCCESS_WINDOW_LOWLEVEL_STEPS,
+        structured_escape_streak: int = STRUCTURED_DEFAULT_ESCAPE_STREAK,
+        structured_four_phase_only: bool = False,
+        structured_phase_count: int | None = None,
+        disabled_policy_mode: str = "none",
+        disable_probability: float = 1.0,
+        fallback_mode: str = "hold_previous",
     ) -> None:
         super().__init__()
         self.low_models = low_models
@@ -226,12 +260,41 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.boundary_priority_exit = boundary_priority_exit
         self.showcase_bound_scale = showcase_bound_scale
         self.showcase_z_bound_scale = showcase_z_bound_scale
+        self.structured_position_jitter = max(float(structured_position_jitter), 0.0)
+        self.structured_relative_jitter = max(float(structured_relative_jitter), 0.0)
+        self.structured_yaw_jitter = max(float(structured_yaw_jitter), 0.0)
+        self.structured_pitch_jitter = max(float(structured_pitch_jitter), 0.0)
+        self.structured_speed_jitter = max(float(structured_speed_jitter), 0.0)
+        self.structured_bound_scale = max(float(structured_bound_scale), 1.0)
+        self.structured_z_bound_scale = max(float(structured_z_bound_scale), 1.0)
+        self.success_window_lowlevel_steps = max(int(success_window_lowlevel_steps), 1)
+        self.structured_escape_streak = max(int(structured_escape_streak), 1)
+        self.structured_four_phase_only = bool(structured_four_phase_only)
+        if disabled_policy_mode not in {"none", "balanced_random"}:
+            raise ValueError("disabled_policy_mode must be 'none' or 'balanced_random'")
+        if not 0.0 <= float(disable_probability) <= 1.0:
+            raise ValueError("disable_probability must be between 0 and 1")
+        if fallback_mode not in {"hold_previous", "random_available"}:
+            raise ValueError("fallback_mode must be 'hold_previous' or 'random_available'")
+        self.disabled_policy_mode = disabled_policy_mode
+        self.disable_probability = float(disable_probability)
+        self.fallback_mode = fallback_mode
+        self.training_episode_index = 0
+        self.disabled_policy_index: int | None = None
+        self.action_remap_count = 0
+        self._disabled_block: list[int] = []
+        if structured_phase_count is not None and int(structured_phase_count) <= 0:
+            raise ValueError("structured_phase_count must be positive when provided")
+        if structured_four_phase_only and structured_phase_count not in (None, 4):
+            raise ValueError("structured_four_phase_only conflicts with structured_phase_count")
+        self.structured_phase_count = None if structured_phase_count is None else int(structured_phase_count)
         if isinstance(regime_schedule, str):
             self.regime_schedule = tuple(item.strip() for item in regime_schedule.split(",") if item.strip())
         else:
             self.regime_schedule = tuple(regime_schedule)
         if not self.regime_schedule:
             self.regime_schedule = DEFAULT_REGIME_SCHEDULE
+        self.current_regime_schedule = self.regime_schedule
 
         self.inner = PursuitEscapeGymEnv(scenario="rear_close_threat")
         self._base_term_cfg = replace(self.inner.inner.term_cfg)
@@ -263,6 +326,37 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info: dict[str, Any] = {}
         self.current_showcase_seed: int | None = None
+        self.structured_phase_index = 0
+        self.structured_completed_phases = 0
+
+    def _select_disabled_policy(self) -> int | None:
+        """Choose one unavailable skill per episode, balanced over blocks of four."""
+        self.training_episode_index += 1
+        if self.disabled_policy_mode == "none":
+            return None
+        if self.disable_probability < 1.0 and float(self.np_random.random()) >= self.disable_probability:
+            return None
+        block_position = (self.training_episode_index - 1) % 4
+        if block_position == 0 or not self._disabled_block:
+            self._disabled_block = [int(value) for value in self.np_random.permutation(4)]
+        return self._disabled_block[block_position]
+
+    def _resolve_option(self, requested: int) -> tuple[int, bool]:
+        requested = int(np.clip(requested, 0, 3))
+        disabled = self.disabled_policy_index
+        if disabled is None or requested != disabled:
+            return requested, False
+        available = [index for index in range(4) if index != disabled]
+        if self.fallback_mode == "hold_previous" and self.prev_option in available:
+            return int(self.prev_option), True
+        return int(self.np_random.choice(available)), True
+
+    def _skill_info(self) -> dict[str, Any]:
+        return {
+            "disabled_policy": "none" if self.disabled_policy_index is None else f"pi{self.disabled_policy_index + 1}",
+            "disabled_policy_index": -1 if self.disabled_policy_index is None else self.disabled_policy_index,
+            "action_remap_count": self.action_remap_count,
+        }
 
     def _use_base_bounds(self) -> None:
         self.inner.inner.term_cfg = replace(self._base_term_cfg)
@@ -282,6 +376,18 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             y_min=base.y_min * xy_scale,
             y_max=base.y_max * xy_scale,
             z_max=base.z_max * z_scale,
+        )
+
+    def _use_structured_bounds(self) -> None:
+        """Use the established expanded operating volume for long structured episodes."""
+        base = self._base_term_cfg
+        self.inner.inner.term_cfg = replace(
+            base,
+            x_min=base.x_min * self.structured_bound_scale,
+            x_max=base.x_max * self.structured_bound_scale,
+            y_min=base.y_min * self.structured_bound_scale,
+            y_max=base.y_max * self.structured_bound_scale,
+            z_max=base.z_max * self.structured_z_bound_scale,
         )
 
     def _is_continuous_set(self) -> bool:
@@ -379,8 +485,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 if step_in_cycle < cursor:
                     return regime
             return SCRIPTED_SHOWCASE_SCHEDULE[-1]
+        if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            index = min(self.structured_phase_index, len(self.current_regime_schedule) - 1)
+            return self.current_regime_schedule[index]
+        schedule = self.regime_schedule
         index = self.continuous_lowlevel_steps // max(self.regime_duration, 1)
-        return self.regime_schedule[index % len(self.regime_schedule)]
+        return schedule[index % len(schedule)]
 
     def _continuous_regime(self) -> str:
         return self.continuous_active_regime or self._continuous_scheduled_regime()
@@ -606,7 +716,76 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         pursuer = replace(pu, x=ev_x + rel_x, y=ev_y + rel_y, z=ev_z + rel_z, yaw=ev_yaw, pitch=ev_pitch + 0.02)
         return Env3DState(evader=evader, pursuer=pursuer, step_count=0)
 
+    @staticmethod
+    def _wrap_angle(angle: float) -> float:
+        return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+    def _structured_random_start_state(self) -> tuple[Env3DState, str]:
+        """Sample a bounded perturbation of one known composite threat geometry.
+
+        The template determines the initial multi-threat geometry; jitter is an
+        evaluation/training-distribution parameter and does not alter the
+        low-level policies, reward, or observation schema.
+        """
+        template_name = str(self.np_random.choice(list(COMPOSITE_SCENARIOS.keys())))
+        template_evader, template_pursuer = COMPOSITE_SCENARIOS[template_name]
+        term = self.inner.inner.term_cfg
+        position_jitter = self.structured_position_jitter
+        relative_jitter = self.structured_relative_jitter
+
+        def bounded(value: float, low: float, high: float) -> float:
+            return float(max(low, min(high, value)))
+
+        evader = replace(
+            template_evader,
+            x=bounded(template_evader.x + float(self.np_random.uniform(-position_jitter, position_jitter)), term.x_min + 1.0, term.x_max - 1.0),
+            y=bounded(template_evader.y + float(self.np_random.uniform(-position_jitter, position_jitter)), term.y_min + 1.0, term.y_max - 1.0),
+            z=bounded(template_evader.z + float(self.np_random.uniform(-position_jitter, position_jitter)), term.z_min + 1.0, term.z_max - 1.0),
+            speed=bounded(template_evader.speed + float(self.np_random.uniform(-self.structured_speed_jitter, self.structured_speed_jitter)), self.inner.inner.env_cfg.evader_speed_min, self.inner.inner.env_cfg.evader_speed_max),
+            yaw=self._wrap_angle(template_evader.yaw + float(self.np_random.uniform(-self.structured_yaw_jitter, self.structured_yaw_jitter))),
+            pitch=bounded(template_evader.pitch + float(self.np_random.uniform(-self.structured_pitch_jitter, self.structured_pitch_jitter)), -math.pi / 3.0, math.pi / 3.0),
+        )
+        relative = (
+            template_pursuer.x - template_evader.x + float(self.np_random.uniform(-relative_jitter, relative_jitter)),
+            template_pursuer.y - template_evader.y + float(self.np_random.uniform(-relative_jitter, relative_jitter)),
+            template_pursuer.z - template_evader.z + float(self.np_random.uniform(-relative_jitter, relative_jitter)),
+        )
+        pursuer = replace(
+            template_pursuer,
+            x=bounded(evader.x + relative[0], term.x_min + 0.5, term.x_max - 0.5),
+            y=bounded(evader.y + relative[1], term.y_min + 0.5, term.y_max - 0.5),
+            z=bounded(evader.z + relative[2], term.z_min + 0.5, term.z_max - 0.5),
+            speed=bounded(template_pursuer.speed + float(self.np_random.uniform(-self.structured_speed_jitter, self.structured_speed_jitter)), self.inner.inner.env_cfg.pursuer_speed_min, self.inner.inner.env_cfg.pursuer_speed_max),
+            yaw=self._wrap_angle(evader.yaw + (template_pursuer.yaw - template_evader.yaw) + float(self.np_random.uniform(-self.structured_yaw_jitter, self.structured_yaw_jitter))),
+            pitch=bounded(evader.pitch + (template_pursuer.pitch - template_evader.pitch) + float(self.np_random.uniform(-self.structured_pitch_jitter, self.structured_pitch_jitter)), -math.pi / 3.0, math.pi / 3.0),
+        )
+        return Env3DState(evader=evader, pursuer=pursuer, step_count=0), template_name
+
+    def _structured_phase_threat_state(self, evader: Agent3DState, phase_name: str) -> Env3DState:
+        """Reintroduce a canonical local threat after an intermediate escape."""
+        scenario_name = PHASE_CANONICAL_SCENARIOS[phase_name]
+        scenario = SCENARIOS[scenario_name]
+        local_f, local_r, local_u = _canonical_local_offset(phase_name)
+        speed_delta = scenario.pursuer.speed - scenario.evader.speed
+        yaw_delta = scenario.pursuer.yaw - scenario.evader.yaw
+        pitch_delta = scenario.pursuer.pitch - scenario.evader.pitch
+        forward, right, up = _body_axes(evader)
+        pursuer = Agent3DState(
+            x=evader.x + local_f * forward[0] + local_r * right[0] + local_u * up[0],
+            y=evader.y + local_f * forward[1] + local_r * right[1] + local_u * up[1],
+            z=evader.z + local_f * forward[2] + local_r * right[2] + local_u * up[2],
+            speed=max(
+                self.inner.inner.env_cfg.pursuer_speed_min,
+                min(self.inner.inner.env_cfg.pursuer_speed_max, evader.speed + speed_delta),
+            ),
+            yaw=evader.yaw + yaw_delta,
+            pitch=evader.pitch + pitch_delta,
+        )
+        step_count = self.inner.inner.state.step_count if self.inner.inner.state is not None else 0
+        return Env3DState(evader=evader, pursuer=pursuer, step_count=step_count)
+
     def _reset_continuous(self, scenario_name: str) -> tuple[np.ndarray, dict[str, Any]]:
+        requested_scenario = scenario_name
         self.current_scenario_name = scenario_name
         self.continuous_lowlevel_steps = 0
         self.continuous_recent_distances = []
@@ -619,12 +798,42 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
-        if scenario_name == CONTINUOUS_SHOWCASE_SCENARIO:
+        self.structured_phase_index = 0
+        self.structured_completed_phases = 0
+        if requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            self._use_structured_bounds()
+            self.inner.inner.term_cfg = replace(
+                self.inner.inner.term_cfg,
+                k_escape=self.structured_escape_streak,
+            )
+            if self.structured_phase_count is not None:
+                schedules = tuple(
+                    tuple(
+                        STRUCTURED_PHASE_CYCLE[(offset + index) % len(STRUCTURED_PHASE_CYCLE)]
+                        for index in range(self.structured_phase_count)
+                    )
+                    for offset in range(len(STRUCTURED_PHASE_CYCLE))
+                )
+            else:
+                schedules = STRUCTURED_COMPOSITE_SCHEDULES
+            if self.structured_four_phase_only:
+                schedules = tuple(schedule for schedule in schedules if len(schedule) == 4)
+            schedule_index = int(self.np_random.integers(len(schedules)))
+            self.current_regime_schedule = tuple(schedules[schedule_index])
+            start_state, template_name = self._structured_random_start_state()
+            scenario_name = f"{requested_scenario}:{template_name}"
+        else:
+            self.current_regime_schedule = self.regime_schedule
+            template_name = ""
+        if requested_scenario == CONTINUOUS_SHOWCASE_SCENARIO:
             self._use_showcase_bounds()
             start_state = SHOWCASE_START_STATE
-        elif scenario_name == SCRIPTED_SHOWCASE_SCENARIO:
+        elif requested_scenario == SCRIPTED_SHOWCASE_SCENARIO:
             self._use_showcase_bounds()
             start_state = self._scripted_showcase_start_state()
+        elif requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            # The branch above has already prepared a randomized start state.
+            pass
         else:
             self._use_base_bounds()
             start_state = CONTINUOUS_START_STATE
@@ -634,16 +843,18 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_regimes_seen.add(regime)
         return obs, {
             "scenario_name": scenario_name,
-            "scenario_set": scenario_name,
+            "scenario_set": self.scenario_set,
+            "structured_template": template_name,
+            "regime_schedule": ",".join(self.current_regime_schedule),
             **regime_info,
             "continuous_lowlevel_steps": 0,
-            "regime_coverage_rate": len(self.continuous_regimes_seen) / len(set(self.regime_schedule)),
+            "regime_coverage_rate": len(self.continuous_regimes_seen) / len(set(self.current_regime_schedule)),
             "boundary_priority_rate": 0.0,
-            "showcase_seed": self.current_showcase_seed if scenario_name == SCRIPTED_SHOWCASE_SCENARIO else "",
+            "showcase_seed": self.current_showcase_seed if requested_scenario == SCRIPTED_SHOWCASE_SCENARIO else "",
         }
 
     def _continuous_recent_metrics(self) -> tuple[float, float]:
-        window = max(1, min(len(self.continuous_recent_distances), 30))
+        window = max(1, min(len(self.continuous_recent_distances), self.success_window_lowlevel_steps))
         if window == 0:
             return 0.0, 0.0
         recent_distance = float(sum(self.continuous_recent_distances[-window:]) / window)
@@ -658,13 +869,17 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         info.update({
             "outcome": outcome,
             "regime_name": regime,
-            "regime_schedule": ",".join(self.regime_schedule),
+            "regime_schedule": ",".join(self.current_regime_schedule),
             "continuous_lowlevel_steps": self.continuous_lowlevel_steps,
             "episode_lowlevel_steps": self.episode_lowlevel_steps,
+            "success_window_lowlevel_steps": self.success_window_lowlevel_steps,
+            "escape_streak_required": self.structured_escape_streak if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else self._base_term_cfg.k_escape,
+            "structured_completed_phases": self.structured_completed_phases,
+            "structured_total_phases": len(self.current_regime_schedule) if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else 0,
             "final_distance": final_distance,
             "recent_distance": recent_distance,
             "recent_closing_speed": recent_closing,
-            "regime_coverage_rate": len(self.continuous_regimes_seen) / max(len(set(self.regime_schedule)), 1),
+            "regime_coverage_rate": len(self.continuous_regimes_seen) / max(len(set(self.current_regime_schedule)), 1),
             "boundary_priority_rate": self.continuous_boundary_priority_steps / max(self.continuous_lowlevel_steps, 1),
             "state_driven_regime_rate": self.continuous_state_driven_steps / max(self.continuous_lowlevel_steps, 1),
             "state_driven_regime_switch_count": self.continuous_regime_switch_count,
@@ -725,13 +940,30 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             tstate=env.tstate,
         )
         reward_outcome = outcome
+        phase_transition = False
         if outcome == EpisodeOutcome.ESCAPED:
-            # In continuous_pursuit, base-env escape is a useful signal but not
-            # an episode/phase completion event. Keep the state continuous and
-            # avoid repeatedly collecting the low-level terminal bonus before
-            # the long-horizon success check.
-            reward_outcome = EpisodeOutcome.RUNNING
-            env.tstate = TerminationState()
+            if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+                self.structured_completed_phases += 1
+                if self.structured_completed_phases < len(self.current_regime_schedule):
+                    self.structured_phase_index += 1
+                    next_phase = self.current_regime_schedule[self.structured_phase_index]
+                    env.state = self._structured_phase_threat_state(evader_next, next_phase)
+                    env.tstate = TerminationState()
+                    self.continuous_active_regime = next_phase
+                    self.continuous_last_regime_switch_step = self.continuous_lowlevel_steps
+                    pursuer_next = env.state.pursuer
+                    reward_outcome = EpisodeOutcome.RUNNING
+                    outcome = EpisodeOutcome.RUNNING
+                    phase_transition = True
+                    cur_distance = relative_distance(env.state)
+                    closing_speed = 0.0
+            else:
+                # In the legacy continuous modes, base-env escape is a useful
+                # signal but not an episode/phase completion event. Keep the
+                # state continuous and avoid repeatedly collecting the terminal
+                # bonus before their long-horizon success check.
+                reward_outcome = EpisodeOutcome.RUNNING
+                env.tstate = TerminationState()
         reward = compute_reward(
             scenario="rear_close_threat",
             prev_distance=prev_distance,
@@ -745,14 +977,22 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         )
         obs_dict = env._observation(closing_speed=closing_speed)
         obs = self.inner._flatten_obs(obs_dict)
+        reported_outcome = outcome.value
+        if outcome == EpisodeOutcome.ESCAPED and self.scenario_set != STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
+            reported_outcome = EpisodeOutcome.RUNNING.value
         info = {
-            "outcome": outcome.value if outcome != EpisodeOutcome.ESCAPED else EpisodeOutcome.RUNNING.value,
+            "outcome": reported_outcome,
             "distance": cur_distance,
             "closing_speed": closing_speed,
             "capture_streak": env.tstate.capture_streak,
             "escape_streak": env.tstate.escape_streak,
+            "phase_transition": phase_transition,
         }
         terminated = outcome in {EpisodeOutcome.CAPTURED, EpisodeOutcome.OUT_OF_BOUNDS}
+        if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO and outcome == EpisodeOutcome.ESCAPED:
+            # Only the final structured phase terminates the episode. An
+            # intermediate escape starts the next scheduled threat phase.
+            terminated = True
         return obs, float(reward), terminated, False, info
 
     def _continuous_success(self) -> bool:
@@ -798,6 +1038,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 break
 
         outcome = str(info.get("outcome", "running"))
+        early_safe_escape = (
+            self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO
+            and outcome == EpisodeOutcome.ESCAPED.value
+            and self.continuous_lowlevel_steps < self.episode_lowlevel_steps
+        )
         if not terminated and self.continuous_lowlevel_steps >= self.episode_lowlevel_steps:
             if self._continuous_success():
                 outcome = "escaped"
@@ -821,15 +1066,20 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             "scenario_set": self.scenario_set,
             "regime_lowlevel_steps": dict(regime_step_counts),
             "scheduled_regime_lowlevel_steps": dict(scheduled_regime_step_counts),
-            "phase_transition": False,
+            "phase_transition": bool(info.get("phase_transition", False)),
             "phase_success": False,
             "completed_phases": 0,
             "total_phases": 0,
+            "early_safe_escape": bool(early_safe_escape),
+            "structured_completed_phases": self.structured_completed_phases,
+            "structured_total_phases": len(self.current_regime_schedule) if self.scenario_set == STRUCTURED_RANDOM_COMPOSITE_SCENARIO else 0,
         })
         return obs, float(total_reward), bool(terminated), bool(truncated), info
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
+        self.disabled_policy_index = self._select_disabled_policy()
+        self.action_remap_count = 0
         self.prev_option = None
         self.highlevel_step_count = 0
         self.switch_count = 0
@@ -853,6 +1103,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
+        self.structured_phase_index = 0
+        self.structured_completed_phases = 0
         self.current_showcase_seed = seed if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else None
 
         if options and "scenario_set" in options:
@@ -866,31 +1118,38 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             base = requested_name or self._sample_basic()
             obs, info = self.inner.reset(seed=seed, options={"scenario": base})
             self.current_scenario_name = base
-            info.update({"scenario_name": base, "scenario_set": "basic"})
+            info.update({"scenario_name": base, "scenario_set": "basic", **self._skill_info()})
             return obs, info
         if self.scenario_set == "mixed":
             mixed_name, base = self._sample_mixed()
             obs, info = self.inner.reset(seed=seed, options={"scenario": base})
             self.current_scenario_name = mixed_name
-            info.update({"scenario_name": mixed_name, "base_scenario": base, "scenario_set": "mixed"})
+            info.update({"scenario_name": mixed_name, "base_scenario": base, "scenario_set": "mixed", **self._skill_info()})
             return obs, info
         if self.scenario_set == "composite":
             comp = requested_name or str(self.np_random.choice(list(COMPOSITE_SCENARIOS.keys())))
             self.current_scenario_name = comp
-            return self._reset_composite_state(comp), {"scenario_name": comp, "scenario_set": "composite"}
+            return self._reset_composite_state(comp), {"scenario_name": comp, "scenario_set": "composite", **self._skill_info()}
         if self._is_continuous_set():
-            return self._reset_continuous(self.scenario_set)
+            obs, info = self._reset_continuous(self.scenario_set)
+            info.update(self._skill_info())
+            return obs, info
 
         seq = requested_name or str(self.np_random.choice(list(SEQUENTIAL_SCENARIOS.keys())))
         self.current_scenario_name = seq
         self.phase_names = SEQUENTIAL_SCENARIOS[seq].phases
         obs = self._inject_current_phase()
-        return obs, {"scenario_name": seq, "scenario_set": "sequential", **self._phase_info()}
+        return obs, {"scenario_name": seq, "scenario_set": "sequential", **self._phase_info(), **self._skill_info()}
 
     def step(self, action: int):
-        idx = int(np.clip(action, 0, 3))
+        requested_idx = int(np.clip(action, 0, 3))
+        idx, remapped = self._resolve_option(requested_idx)
+        if remapped:
+            self.action_remap_count += 1
         if self._is_continuous_set():
-            return self._step_continuous_pursuit(idx)
+            result = self._step_continuous_pursuit(idx)
+            result[-1].update({"requested_option": requested_idx, **self._skill_info()})
+            return result
         total_reward = 0.0
         duration_used = 0
         terminated = False
@@ -977,6 +1236,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         info.update(
             {
                 "selected_option": idx,
+                "requested_option": requested_idx,
                 "option_duration_used": duration_used,
                 "switch_count": self.switch_count,
                 "scenario_name": self.current_scenario_name,
@@ -984,6 +1244,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
                 "phase_transition": phase_transition,
                 **self._phase_info(),
                 "phase_success": phase_transition,
+                **self._skill_info(),
             }
         )
         return obs, float(total_reward), bool(terminated), bool(truncated), info

@@ -25,9 +25,17 @@ import argparse
 import csv
 import json
 import math
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+
+# Allow direct execution as ``python tools/<script>.py`` from the repository
+# root on Windows and POSIX shells alike.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 DEFAULT_CHECKPOINTS = {

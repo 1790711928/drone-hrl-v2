@@ -1,8 +1,11 @@
-# Representative low-level trajectories
+# Low-level trajectory candidate scanner
 
-This tool selects one successful fixed-seed trajectory for each of `pi1_rear`,
-`pi2_flank`, `pi3_boundary`, and `pi4_vertical`. It uses trajectory geometry
-only; it does not call the score matrix or heatmap code.
+This tool scans fixed-seed rollouts from the four private SAC checkpoints and
+keeps every successful, finite trajectory for manual review. It does not call
+the behavior-score or heatmap pipelines and does not automatically choose the
+final paper trajectory. It records pursuer-process diagnostics including
+distance by step, minimum distance, time to minimum, initial closing trend,
+pursuit duration, pursuer path length, and final relative speed.
 
 Run locally after placing the four private SAC checkpoints in
 `outputs/checkpoints`:
@@ -13,10 +16,7 @@ python tools/select_representative_low_level_trajectories.py `
   --seed-start 0 `
   --seed-end 199 `
   --output-dir outputs/representative_low_level_trajectories `
-  --deterministic `
-  --plot-3d `
-  --plot-xoy `
-  --add-aircraft
+  --deterministic
 ```
 
 Checkpoint overrides are available with `--pi1-rear-checkpoint`,
@@ -24,14 +24,15 @@ Checkpoint overrides are available with `--pi1-rear-checkpoint`,
 `--pi4-vertical-checkpoint`. The default filenames are the four files named in
 the main repository checkpoint convention.
 
-The tool scans only successful, finite, complete episodes. It ranks the four
-policies independently: pi1 rewards forward-axis and distance expansion while
-penalizing vertical displacement; pi2 rewards right-axis excursion and lateral
-path length; pi3 rewards early boundary approach followed by margin recovery;
-pi4 rewards vertical ascent while penalizing horizontal displacement.
+The aggregate table is `candidate_trajectories_metrics.csv`; each successful
+rollout is written as a complete per-step CSV under `trajectories/`. The
+`candidate_rejection_reason` column explains why a rollout was excluded from
+the manual candidate set. Ranking scores are supplied only as a review aid;
+there is no automatic final seed selection.
 
-Each selected figure is a two-view PNG containing a 3D view and an XOY view.
-The evader is red with a solid line and the pursuer is blue with a dashed line.
-The endpoint glyph is a small four-rotor aircraft oriented by the final valid
-velocity direction. The command creates CSV/JSON/PNG outputs only when run
-locally with available checkpoints.
+The retained plotting function produces a single 3D view only. The evader is
+red with a solid line and the pursuer is blue with a dashed line; both starts
+are black `x` markers. XOY views and endpoint aircraft glyphs are disabled.
+Use `--plot-3d` only when you explicitly want review PNGs after the candidate
+table has been inspected. The command creates outputs only locally with
+available checkpoints.

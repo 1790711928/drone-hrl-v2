@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Select and plot representative successful low-level SAC trajectories.
+"""Scan low-level SAC trajectories and prepare candidates for manual review.
 
 This tool is intentionally independent of the behavior-score and heatmap
-pipelines.  It loads four SAC checkpoints only when ``main`` is executed with
-real checkpoint paths, rolls out fixed seeds, rejects unsuccessful or invalid
-episodes, ranks each policy with a direction-specific heuristic, and writes
-candidate metrics, selected trajectories, a manifest, and optional figures.
+pipelines. It loads four SAC checkpoints only when ``main`` is executed with
+real checkpoint paths, rolls out fixed seeds, records all candidates, applies
+transparent pursuit-quality rejection reasons, and leaves final trajectory
+selection to manual review.
 
 Local example (run from the repository root)::
 
@@ -13,7 +13,7 @@ Local example (run from the repository root)::
       --checkpoint-dir outputs/checkpoints \
       --seed-start 0 --seed-end 199 \
       --output-dir outputs/representative_low_level_trajectories \
-      --deterministic --plot-3d --plot-xoy --add-aircraft
+      --deterministic
 
 The online repository does not contain the user's private checkpoints.  This
 module therefore keeps all model imports and rollout work behind ``main``.
@@ -69,6 +69,7 @@ class Trajectory:
     pursuer: list[tuple[float, float, float]] = field(default_factory=list)
     observations: list[dict[str, float]] = field(default_factory=list)
     evader_velocity: list[tuple[float, float, float]] = field(default_factory=list)
+    actions: list[Any] = field(default_factory=list)
 
 
 def _norm3(vector: tuple[float, float, float]) -> float:
@@ -129,6 +130,10 @@ def trajectory_metrics(trajectory: Trajectory) -> dict[str, Any]:
     final_relative = _sub(final_evader, trajectory.pursuer[-1])
     initial_distance = _norm3(initial_relative)
     final_distance = _norm3(final_relative)
+    distance_series = [_norm3(_sub(evader, pursuer)) for evader, pursuer in zip(trajectory.evader, trajectory.pursuer)]
+    minimum_distance = min(distance_series)
+    time_to_minimum_distance = int(min(range(len(distance_series)), key=distance_series.__getitem__))
+    distance_before_escape = distance_series[-2] if trajectory.success and len(distance_series) >= 2 else final_distance
     evader_delta = _sub(final_evader, initial_evader)
     horizontal_displacement = math.hypot(evader_delta[0], evader_delta[1])
     vertical_displacement = abs(evader_delta[2])
@@ -152,6 +157,12 @@ def trajectory_metrics(trajectory: Trajectory) -> dict[str, Any]:
     early_count = max(1, len(finite_margins) // 5)
     early_minimum = min(finite_margins[:early_count]) if finite_margins else float("nan")
     boundary_recovery = final_margin - minimum_margin if finite_margins else float("nan")
+    closing_speeds = [float(item.get("closing_speed", float("nan"))) for item in trajectory.observations]
+    early_closing = [value for value in closing_speeds[: max(1, len(closing_speeds) * 2 // 5)] if math.isfinite(value)]
+    early_distance = _norm3(_sub(trajectory.evader[max(0, len(trajectory.evader) * 2 // 5 - 1)], trajectory.pursuer[max(0, len(trajectory.pursuer) * 2 // 5 - 1)]))
+    pursuit_closing_ratio = _safe_mean(1.0 if value >= 0.0 else 0.0 for value in early_closing)
+    initial_closing_trend = bool(len(early_closing) >= 2 and pursuit_closing_ratio >= 0.5)
+    early_separation_ratio = max(0.0, (early_distance - initial_distance) / max(initial_distance, 1e-6))
     final_velocity = trajectory.evader_velocity[-1] if trajectory.evader_velocity else (0.0, 0.0, 0.0)
     velocity_norm = _norm3(final_velocity)
     if velocity_norm < 1e-8 and len(trajectory.evader) >= 2:
@@ -160,6 +171,17 @@ def trajectory_metrics(trajectory: Trajectory) -> dict[str, Any]:
     final_velocity_direction = _scale(final_velocity, 1.0 / velocity_norm) if velocity_norm > 1e-8 else (0.0, 0.0, 0.0)
     first_obs = trajectory.observations[0]
     last_obs = trajectory.observations[-1]
+    pursuer_path_length = sum(
+        _norm3(_sub(trajectory.pursuer[index], trajectory.pursuer[index - 1]))
+        for index in range(1, len(trajectory.pursuer))
+    )
+    pursuer_valid_steps = sum(_finite_point(point) for point in trajectory.pursuer)
+    pursuer_direction = (0.0, 0.0, 0.0)
+    if len(trajectory.pursuer) >= 2:
+        pursuer_delta = _sub(trajectory.pursuer[-1], trajectory.pursuer[-2])
+        pursuer_norm = _norm3(pursuer_delta)
+        if pursuer_norm > 1e-8:
+            pursuer_direction = _scale(pursuer_delta, 1.0 / pursuer_norm)
     return {
         "policy_name": trajectory.policy_name,
         "scenario": trajectory.scenario,
@@ -172,6 +194,9 @@ def trajectory_metrics(trajectory: Trajectory) -> dict[str, Any]:
         "initial_position": initial_evader,
         "final_position": final_evader,
         "initial_distance": initial_distance,
+        "minimum_distance": minimum_distance,
+        "time_to_minimum_distance": time_to_minimum_distance,
+        "distance_before_escape": distance_before_escape,
         "final_distance": final_distance,
         "distance_change": final_distance - initial_distance,
         "horizontal_displacement": horizontal_displacement,
@@ -190,6 +215,15 @@ def trajectory_metrics(trajectory: Trajectory) -> dict[str, Any]:
         "boundary_margin_final": final_margin,
         "boundary_margin_recovery": boundary_recovery,
         "boundary_margin_early_min": early_minimum,
+        "pursuit_closing_ratio_early": pursuit_closing_ratio,
+        "initial_closing_trend": int(initial_closing_trend),
+        "pursuit_duration": max(0, len(trajectory.pursuer) - 1),
+        "pursuer_path_length": pursuer_path_length,
+        "pursuer_valid_steps": pursuer_valid_steps,
+        "pursuer_heading_or_velocity_direction": pursuer_direction,
+        "pursuer_evader_distance_by_step": ";".join(f"{value:.8g}" for value in distance_series),
+        "final_relative_speed": float(last_obs.get("closing_speed", float("nan"))),
+        "early_separation_ratio": early_separation_ratio,
         "final_velocity_direction": final_velocity_direction,
     }
 
@@ -205,7 +239,9 @@ def rank_rear_trajectory(metrics: dict[str, Any]) -> float:
     vertical = _finite_metric(metrics, "vertical_displacement")
     forward_gap = _finite_metric(metrics, "forward_gap_change")
     distance_change = _finite_metric(metrics, "distance_change")
-    return 2.0 * distance_change + 2.0 * forward_gap + horizontal - 2.5 * vertical
+    pursuit_penalty = max(0.0, 0.55 - _finite_metric(metrics, "pursuit_closing_ratio_early")) * 2.0
+    early_escape_penalty = max(0.0, _finite_metric(metrics, "early_separation_ratio") - 0.35) * 3.0
+    return 2.0 * distance_change + 2.0 * forward_gap + horizontal - 2.5 * vertical - pursuit_penalty - early_escape_penalty
 
 
 def rank_flank_trajectory(metrics: dict[str, Any]) -> float:
@@ -214,7 +250,9 @@ def rank_flank_trajectory(metrics: dict[str, Any]) -> float:
     lateral_path = _finite_metric(metrics, "lateral_path_length")
     vertical = _finite_metric(metrics, "vertical_displacement")
     forward = abs(_finite_metric(metrics, "forward_gap_change"))
-    return 2.0 * lateral + 1.5 * lateral_path - 2.0 * vertical - 0.5 * forward
+    pursuit_penalty = max(0.0, 0.55 - _finite_metric(metrics, "pursuit_closing_ratio_early")) * 1.5
+    early_escape_penalty = max(0.0, _finite_metric(metrics, "early_separation_ratio") - 0.35) * 2.0
+    return 2.0 * lateral + 1.5 * lateral_path - 2.0 * vertical - 0.5 * forward - pursuit_penalty - early_escape_penalty
 
 
 def rank_boundary_trajectory(metrics: dict[str, Any]) -> float:
@@ -224,7 +262,8 @@ def rank_boundary_trajectory(metrics: dict[str, Any]) -> float:
     final = _finite_metric(metrics, "boundary_margin_final")
     recovery = _finite_metric(metrics, "boundary_margin_recovery")
     approach = max(0.0, initial - early_min)
-    return 3.0 * approach + 3.0 * recovery + 1.5 * final + _finite_metric(metrics, "distance_change")
+    pursuit_penalty = max(0.0, 0.55 - _finite_metric(metrics, "pursuit_closing_ratio_early")) * 1.0
+    return 3.0 * approach + 3.0 * recovery + 1.5 * final + _finite_metric(metrics, "distance_change") - pursuit_penalty
 
 
 def rank_vertical_trajectory(metrics: dict[str, Any]) -> float:
@@ -232,7 +271,9 @@ def rank_vertical_trajectory(metrics: dict[str, Any]) -> float:
     vertical = _finite_metric(metrics, "vertical_displacement")
     horizontal = _finite_metric(metrics, "horizontal_displacement")
     up_gap = _finite_metric(metrics, "up_gap_change")
-    return 3.0 * vertical + 2.0 * up_gap - 2.5 * horizontal
+    pursuit_penalty = max(0.0, 0.55 - _finite_metric(metrics, "pursuit_closing_ratio_early")) * 1.5
+    early_escape_penalty = max(0.0, _finite_metric(metrics, "early_separation_ratio") - 0.35) * 2.0
+    return 3.0 * vertical + 2.0 * up_gap - 2.5 * horizontal - pursuit_penalty - early_escape_penalty
 
 
 RANKERS: dict[str, Callable[[dict[str, Any]], float]] = {
@@ -261,7 +302,11 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         raise ValueError(f"cannot write empty CSV: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = list(rows[0])
+    fields: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fields:
+                fields.append(key)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -270,8 +315,11 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _save_trajectory_csv(path: Path, trajectory: Trajectory) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["step", "evader_x", "evader_y", "evader_z", "pursuer_x", "pursuer_y", "pursuer_z"]
-    fields.extend(f"obs_{key}" for key in trajectory.observations[0])
+    fields = [
+        "step", "evader_x", "evader_y", "evader_z", "pursuer_x", "pursuer_y", "pursuer_z",
+        "distance", "closing_speed", "threat_forward", "threat_right", "threat_up",
+        "boundary_margin", "selected_action",
+    ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -280,84 +328,42 @@ def _save_trajectory_csv(path: Path, trajectory: Trajectory) -> None:
                 "step": index,
                 "evader_x": evader[0], "evader_y": evader[1], "evader_z": evader[2],
                 "pursuer_x": pursuer[0], "pursuer_y": pursuer[1], "pursuer_z": pursuer[2],
+                "distance": _norm3(_sub(evader, pursuer)),
+                "closing_speed": observation.get("closing_speed", ""),
+                "threat_forward": observation.get("threat_forward", ""),
+                "threat_right": observation.get("threat_right", ""),
+                "threat_up": observation.get("threat_up", ""),
+                "boundary_margin": observation.get("min_boundary_margin", ""),
+                "selected_action": json.dumps(_serialize_value(trajectory.actions[index]), ensure_ascii=False)
+                if index < len(trajectory.actions) else "",
             }
-            row.update({f"obs_{key}": value for key, value in observation.items()})
             writer.writerow(row)
 
 
-def _draw_aircraft(ax: Any, position: tuple[float, float, float], direction: tuple[float, float, float], color: str, scale: float, label: str | None = None) -> None:
-    """Draw a small four-rotor aircraft glyph at a trajectory endpoint."""
-    norm = _norm3(direction)
-    forward = _scale(direction, 1.0 / norm) if norm > 1e-8 else (1.0, 0.0, 0.0)
-    up = (0.0, 0.0, 1.0)
-    side = (-forward[1], forward[0], 0.0)
-    side_norm = _norm3(side)
-    if side_norm < 1e-8:
-        side = (0.0, 1.0, 0.0)
-    else:
-        side = _scale(side, 1.0 / side_norm)
-    arm_a = _add(_scale(forward, scale), _scale(side, scale))
-    arm_b = _add(_scale(forward, scale), _scale(side, -scale))
-    for arm in (arm_a, arm_b):
-        left = _add(position, arm)
-        right = _add(position, _scale(arm, -1.0))
-        ax.plot([left[0], right[0]], [left[1], right[1]], [left[2], right[2]], color=color, linewidth=1.5, alpha=0.9)
-        ax.scatter([left[0], right[0]], [left[1], right[1]], [left[2], right[2]], color=color, s=12, label=None)
-    nose = _add(position, _scale(forward, scale * 1.35))
-    ax.plot([position[0], nose[0]], [position[1], nose[1]], [position[2], nose[2]], color=color, linewidth=2.2, label=label)
-
-
-def plot_strategy_trajectory(trajectory: Trajectory, output_path: Path, *, plot_3d: bool, plot_xoy: bool, add_aircraft: bool) -> None:
-    """Save a unified 3D/XOY two-view figure for one selected trajectory."""
-    if not plot_3d and not plot_xoy:
-        return
+def plot_strategy_trajectory(trajectory: Trajectory, output_path: Path) -> None:
+    """Save one 3D trajectory view; candidate choice remains manual."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    panels = int(plot_3d) + int(plot_xoy)
-    fig = plt.figure(figsize=(7.6 * panels, 6.2))
-    axes: list[Any] = []
+    fig = plt.figure(figsize=(8.2, 6.5))
+    axis = fig.add_subplot(111, projection="3d")
     evader = trajectory.evader
     pursuer = trajectory.pursuer
-    final_direction = trajectory.evader_velocity[-1] if trajectory.evader_velocity else _sub(evader[-1], evader[-2])
-    all_points = evader + pursuer
-    extent = max(max(point[index] for point in all_points) - min(point[index] for point in all_points) for index in range(3))
-    aircraft_scale = max(extent * 0.035, 0.25)
-    if plot_3d:
-        axes.append(fig.add_subplot(1, panels, len(axes) + 1, projection="3d"))
-    if plot_xoy:
-        axes.append(fig.add_subplot(1, panels, len(axes) + 1))
-    for axis in axes:
-        if getattr(axis, "name", "") == "3d":
-            axis.plot([p[0] for p in evader], [p[1] for p in evader], [p[2] for p in evader], color="red", linewidth=2.2, label="evader")
-            axis.plot([p[0] for p in pursuer], [p[1] for p in pursuer], [p[2] for p in pursuer], color="blue", linestyle="--", linewidth=1.5, label="pursuer")
-            if add_aircraft:
-                _draw_aircraft(axis, evader[-1], final_direction, "red", aircraft_scale, "evader aircraft")
-                _draw_aircraft(axis, pursuer[-1], _sub(pursuer[-1], pursuer[-2]), "blue", aircraft_scale, "pursuer aircraft")
-            axis.set_zlabel("Z")
-            axis.view_init(elev=24, azim=-58)
-        else:
-            axis.plot([p[0] for p in evader], [p[1] for p in evader], color="red", linewidth=2.2, label="evader")
-            axis.plot([p[0] for p in pursuer], [p[1] for p in pursuer], color="blue", linestyle="--", linewidth=1.5, label="pursuer")
-            axis.set_aspect("equal", adjustable="datalim")
-        if getattr(axis, "name", "") == "3d":
-            axis.scatter([evader[0][0]], [evader[0][1]], [evader[0][2]], color="red", marker="o", s=28, label="evader start")
-            axis.scatter([pursuer[0][0]], [pursuer[0][1]], [pursuer[0][2]], color="blue", marker="o", s=28, label="pursuer start")
-            axis.scatter([evader[-1][0]], [evader[-1][1]], [evader[-1][2]], color="red", marker="^", s=38, label="evader end")
-            axis.scatter([pursuer[-1][0]], [pursuer[-1][1]], [pursuer[-1][2]], color="blue", marker="^", s=38, label="pursuer end")
-        else:
-            axis.scatter([evader[0][0]], [evader[0][1]], color="red", marker="o", s=28, label="evader start")
-            axis.scatter([pursuer[0][0]], [pursuer[0][1]], color="blue", marker="o", s=28, label="pursuer start")
-            axis.scatter([evader[-1][0]], [evader[-1][1]], color="red", marker="x", s=38, label="evader end")
-            axis.scatter([pursuer[-1][0]], [pursuer[-1][1]], color="blue", marker="x", s=38, label="pursuer end")
-        axis.set_xlabel("X")
-        axis.set_ylabel("Y")
-        axis.grid(alpha=0.25)
-        axis.set_title(f"{trajectory.policy_name} | seed={trajectory.seed}")
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=4)
-    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    axis.plot([p[0] for p in evader], [p[1] for p in evader], [p[2] for p in evader], color="red", linewidth=2.2, label="evader")
+    axis.plot([p[0] for p in pursuer], [p[1] for p in pursuer], [p[2] for p in pursuer], color="blue", linestyle="--", linewidth=1.5, label="pursuer")
+    axis.scatter([evader[0][0]], [evader[0][1]], [evader[0][2]], color="black", marker="x", s=52, linewidths=2.0, label="evader_start")
+    axis.scatter([pursuer[0][0]], [pursuer[0][1]], [pursuer[0][2]], color="black", marker="x", s=52, linewidths=2.0, label="pursuer_start")
+    axis.scatter([evader[-1][0]], [evader[-1][1]], [evader[-1][2]], color="red", marker="^", s=38, label="evader_end")
+    axis.scatter([pursuer[-1][0]], [pursuer[-1][1]], [pursuer[-1][2]], color="blue", marker="^", s=38, label="pursuer_end")
+    axis.set_xlabel("X")
+    axis.set_ylabel("Y")
+    axis.set_zlabel("Z")
+    axis.view_init(elev=24, azim=-58)
+    axis.grid(alpha=0.25)
+    axis.set_title(f"{trajectory.policy_name} | seed={trajectory.seed}")
+    axis.legend(loc="best")
+    fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
@@ -373,6 +379,7 @@ def _rollout(model: Any, policy_name: str, seed: int, deterministic: bool) -> Tr
     pursuer: list[tuple[float, float, float]] = []
     observations: list[dict[str, float]] = []
     velocities: list[tuple[float, float, float]] = []
+    actions: list[Any] = []
     previous_evader: tuple[float, float, float] | None = None
     outcome = "running"
     try:
@@ -391,6 +398,7 @@ def _rollout(model: Any, policy_name: str, seed: int, deterministic: bool) -> Tr
                 velocities.append(_sub(current_evader, previous_evader))
             previous_evader = current_evader
             action, _ = model.predict(observation, deterministic=deterministic)
+            actions.append(_serialize_value(action.tolist() if hasattr(action, "tolist") else action))
             observation, _, terminated, truncated, info = env.step(action)
             outcome = str(info.get("outcome", "running"))
             if terminated or truncated:
@@ -404,7 +412,7 @@ def _rollout(model: Any, policy_name: str, seed: int, deterministic: bool) -> Tr
         success = outcome == "escaped" and len(evader) >= 2
     finally:
         env.close()
-    return Trajectory(policy_name, scenario, seed, success, outcome, evader, pursuer, observations, velocities)
+    return Trajectory(policy_name, scenario, seed, success, outcome, evader, pursuer, observations, velocities, actions)
 
 
 def _checkpoint_arguments(parser: argparse.ArgumentParser) -> None:
@@ -413,17 +421,34 @@ def _checkpoint_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Select representative successful low-level SAC trajectories")
+    parser = argparse.ArgumentParser(description="Scan successful low-level SAC trajectory candidates for manual review")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
     _checkpoint_arguments(parser)
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-end", type=int, default=199)
     parser.add_argument("--output-dir", default="outputs/representative_low_level_trajectories")
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--plot-3d", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--plot-xoy", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--add-aircraft", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--plot-3d", action=argparse.BooleanOptionalAction, default=False,
+                        help="Optionally render every accepted candidate as a 3D review figure; no final seed is selected")
     return parser
+
+
+def _candidate_rejection_reason(trajectory: Trajectory, metrics: dict[str, Any]) -> str:
+    """Return a transparent reason for excluding a rollout from candidate review."""
+    if not trajectory.success or trajectory.outcome != "escaped":
+        return "outcome_not_escaped"
+    if len(trajectory.evader) < 6 or len(trajectory.pursuer) < 6:
+        return "pursuer_trajectory_too_short"
+    valid_ratio = float(metrics["pursuer_valid_steps"]) / max(1, len(trajectory.pursuer))
+    if valid_ratio < 0.95:
+        return "pursuer_valid_steps_too_low"
+    if not metrics["initial_closing_trend"]:
+        return "no_initial_closing_trend"
+    if metrics["pursuit_closing_ratio_early"] < 0.35:
+        return "pursuit_trend_lost"
+    if metrics["early_separation_ratio"] > 0.75:
+        return "early_separation_without_pursuit"
+    return ""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -445,39 +470,43 @@ def main(argv: list[str] | None = None) -> int:
 
     models = {policy: SAC.load(str(path)) for policy, path in checkpoint_paths.items()}
     all_rows: list[dict[str, Any]] = []
-    selected: dict[str, tuple[Trajectory, dict[str, Any], float]] = {}
+    accepted_count = 0
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    trajectory_dir = output_dir / "trajectories"
     for policy_name, model in models.items():
         for seed in range(args.seed_start, args.seed_end + 1):
             try:
                 trajectory = _rollout(model, policy_name, seed, args.deterministic)
-                if not trajectory.success:
-                    continue
                 metrics = trajectory_metrics(trajectory)
                 rank_score = RANKERS[policy_name](metrics)
-                all_rows.append(_trajectory_row(metrics, rank_score))
-                current = selected.get(policy_name)
-                if current is None or rank_score > current[2]:
-                    selected[policy_name] = (trajectory, metrics, rank_score)
+                rejection_reason = _candidate_rejection_reason(trajectory, metrics)
+                row = _trajectory_row(metrics, rank_score)
+                row["candidate_rejection_reason"] = rejection_reason
+                row["accepted_candidate"] = int(not rejection_reason)
+                all_rows.append(row)
+                if trajectory.success:
+                    accepted_count += int(not rejection_reason)
+                    trajectory_path = trajectory_dir / f"{POLICY_OUTPUT_NAMES[policy_name]}_seed{seed}.csv"
+                    _save_trajectory_csv(trajectory_path, trajectory)
+                    if args.plot_3d and not rejection_reason:
+                        plot_strategy_trajectory(trajectory, output_dir / f"{POLICY_OUTPUT_NAMES[policy_name]}_seed{seed}_3d.png")
             except (RuntimeError, ValueError, FloatingPointError):
-                continue
-    if len(selected) != len(POLICY_SCENARIOS):
-        raise RuntimeError(f"No valid successful trajectory was found for: {sorted(set(POLICY_SCENARIOS) - set(selected))}")
-
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+                all_rows.append({
+                    "policy_name": policy_name, "scenario": POLICY_SCENARIOS[policy_name], "seed": seed,
+                    "success": 0, "candidate_rejection_reason": "rollout_or_metric_error", "accepted_candidate": 0,
+                })
     _write_csv(output_dir / "candidate_trajectories_metrics.csv", all_rows)
-    selected_rows: list[dict[str, Any]] = []
-    manifest: dict[str, Any] = {"seed_start": args.seed_start, "seed_end": args.seed_end, "deterministic": args.deterministic, "policies": {}}
-    for policy_name, (trajectory, metrics, rank_score) in selected.items():
-        output_name = POLICY_OUTPUT_NAMES[policy_name]
-        trajectory_csv = output_dir / f"{output_name}_seed{trajectory.seed}.csv"
-        _save_trajectory_csv(trajectory_csv, trajectory)
-        figure_path = output_dir / f"{output_name}_trajectory.png"
-        plot_strategy_trajectory(trajectory, figure_path, plot_3d=args.plot_3d, plot_xoy=args.plot_xoy, add_aircraft=args.add_aircraft)
-        selected_rows.append({"policy_name": policy_name, "seed": trajectory.seed, "success": trajectory.success, "rank_score": rank_score, "trajectory_csv": str(trajectory_csv), "plot": str(figure_path), **_trajectory_row(metrics, rank_score)})
-        manifest["policies"][policy_name] = {"checkpoint": str(checkpoint_paths[policy_name]), "selected_seed": trajectory.seed, "metrics": _trajectory_row(metrics, rank_score), "trajectory_csv": str(trajectory_csv), "plot": str(figure_path), "ranking_rule": RANKERS[policy_name].__name__}
-    _write_csv(output_dir / "selected_seeds.csv", selected_rows)
-    (output_dir / "selection_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    manifest = {
+        "seed_start": args.seed_start,
+        "seed_end": args.seed_end,
+        "deterministic": args.deterministic,
+        "candidate_policy": "all successful rollouts are retained; no automatic final seed selection",
+        "accepted_candidate_count": accepted_count,
+        "plot_mode": "3D only when --plot-3d is explicitly supplied; aircraft and XOY views are disabled",
+        "checkpoints": {policy: str(path) for policy, path in checkpoint_paths.items()},
+    }
+    (output_dir / "candidate_scan_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return 0
 
 

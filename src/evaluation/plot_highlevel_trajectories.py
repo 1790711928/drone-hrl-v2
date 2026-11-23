@@ -712,6 +712,33 @@ def save_plot(
     return output_path
 
 
+def parse_advantage_strategy_args(
+    sequence_text: str | None,
+    steps_text: str | None,
+    *,
+    total_steps: int,
+) -> tuple[tuple[str, ...] | None, tuple[int, ...] | None]:
+    if sequence_text is None and steps_text is None:
+        return None, None
+    if sequence_text is None or steps_text is None:
+        raise ValueError("--strategy-sequence and --strategy-steps must be provided together")
+    try:
+        strategy_ids = tuple(int(item.strip()) for item in sequence_text.split(",") if item.strip())
+        durations = tuple(int(item.strip()) for item in steps_text.split(",") if item.strip())
+    except ValueError as exc:
+        raise ValueError("strategy sequence and steps must be comma-separated integers") from exc
+    id_to_regime = {1: "rear", 2: "flank", 3: "boundary", 4: "vertical"}
+    if not strategy_ids or any(item not in id_to_regime for item in strategy_ids):
+        raise ValueError("strategy IDs must be 1, 2, 3, or 4")
+    if len(strategy_ids) != len(durations):
+        raise ValueError("strategy sequence and steps must have the same length")
+    if any(duration <= 0 for duration in durations):
+        raise ValueError("strategy steps must be positive")
+    if sum(durations) != total_steps:
+        raise ValueError(f"strategy steps must sum to {total_steps}")
+    return tuple(id_to_regime[item] for item in strategy_ids), durations
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot high-level option trajectories for presentation")
     parser.add_argument("--mode", choices=["highlevel", "fixed", "random", "continuous_heuristic", "regime_oracle", "scripted_showcase", "advantage_showcase"], default="highlevel")
@@ -735,6 +762,8 @@ def main() -> None:
     parser.add_argument("--show-phase-reset-jump", action="store_true")
     parser.add_argument("--showcase-mode", choices=["phase_based", "continuous"], default="phase_based")
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
+    parser.add_argument("--strategy-sequence", default=None, help="advantage_showcase strategy IDs, e.g. 4,3,1")
+    parser.add_argument("--strategy-steps", default=None, help="advantage_showcase low-level durations, e.g. 80,100,120")
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
@@ -762,6 +791,17 @@ def main() -> None:
         args.episode_lowlevel_steps = 500
     elif args.scenario_set == ADVANTAGE_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 300
+
+    try:
+        advantage_strategy_schedule, advantage_strategy_durations = parse_advantage_strategy_args(
+            args.strategy_sequence,
+            args.strategy_steps,
+            total_steps=args.episode_lowlevel_steps,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if (args.strategy_sequence is not None or args.strategy_steps is not None) and args.scenario_set != ADVANTAGE_SHOWCASE_SCENARIO:
+        parser.error("--strategy-sequence/--strategy-steps are only supported for advantage_showcase")
 
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
@@ -819,6 +859,8 @@ def main() -> None:
         boundary_priority_exit=args.boundary_priority_exit,
         showcase_bound_scale=args.showcase_bound_scale,
         showcase_z_bound_scale=args.showcase_z_bound_scale,
+        advantage_strategy_schedule=advantage_strategy_schedule,
+        advantage_strategy_durations=advantage_strategy_durations,
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()

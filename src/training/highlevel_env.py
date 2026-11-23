@@ -176,7 +176,7 @@ DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "bou
 SCRIPTED_SHOWCASE_SCHEDULE = ("rear", "flank", "vertical", "boundary", "rear", "flank")
 SCRIPTED_SHOWCASE_DURATIONS = (60, 60, 60, 60, 80, 80, 100)
 ADVANTAGE_SHOWCASE_SCHEDULE = ("vertical", "rear")
-ADVANTAGE_SHOWCASE_DURATIONS = (110, 170)
+ADVANTAGE_SHOWCASE_DURATIONS = (80, 220)
 STRUCTURED_COMPOSITE_SCHEDULES = (
     ("rear", "flank", "boundary"),
     ("flank", "vertical", "boundary"),

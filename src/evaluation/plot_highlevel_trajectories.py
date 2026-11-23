@@ -29,7 +29,7 @@ STRATEGY_LABELS = {
 }
 OPTION_TO_STRATEGY = {name: STRATEGY_LABELS[index] for index, name in enumerate(OPTION_NAMES)}
 SCRIPTED_SHOWCASE_SCRIPT_NAME = "rear60-flank60-vertical60-boundary60-rear80-flank80-vertical100"
-ADVANTAGE_SHOWCASE_SCRIPT_NAME = "advantage_pi4_110_pi1_170"
+ADVANTAGE_SHOWCASE_SCRIPT_NAME = "advantage_pi4_80_pi1_220"
 LOW_MODEL_FILENAMES = (
     "sac_low_1_rear_close_threat.zip",
     "sac_low_2_flank_threat.zip",
@@ -448,7 +448,11 @@ def _plot_segment(
     label: str | None,
     alpha: float = 1.0,
     view: str = "3d",
+    zorder: int | None = None,
 ) -> None:
+    line_kwargs = {"color": color, "linestyle": linestyle, "linewidth": linewidth, "label": label, "alpha": alpha}
+    if zorder is not None:
+        line_kwargs["zorder"] = zorder
     if len(points) == 1:
         if view == "topdown":
             ax.scatter(points[0][0], points[0][1], color=color, marker=".", s=25, label=label, alpha=alpha)
@@ -457,10 +461,10 @@ def _plot_segment(
         return
     if view == "topdown":
         xs, ys, _ = zip(*points)
-        ax.plot(xs, ys, color=color, linestyle=linestyle, linewidth=linewidth, label=label, alpha=alpha)
+        ax.plot(xs, ys, **line_kwargs)
     else:
         coords = list(zip(*points))
-        ax.plot(*coords, color=color, linestyle=linestyle, linewidth=linewidth, label=label, alpha=alpha)
+        ax.plot(*coords, **line_kwargs)
 
 
 def _scatter_point(ax, point: tuple[float, float, float], *, view: str, **kwargs) -> None:
@@ -505,6 +509,10 @@ def save_plot(
         episode.scenario in {SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO}
         or episode.mode in {"scripted_showcase", "advantage_showcase"}
     )
+    is_advantage_showcase = (
+        episode.scenario == ADVANTAGE_SHOWCASE_SCENARIO
+        or episode.mode == "advantage_showcase"
+    )
     suppress_text_annotations = no_text_annotations or (is_scripted_showcase and not show_callouts)
     draw_strategy_switch_markers = show_strategy_switch_markers or not is_scripted_showcase
     draw_regime_switch_markers = show_regime_switch_markers or not is_scripted_showcase
@@ -536,10 +544,11 @@ def save_plot(
             pursuer_segment,
             color="tab:red",
             linestyle="--",
-            linewidth=1.4,
+            linewidth=1.0 if is_advantage_showcase else 1.4,
             label=("pursuer" if is_scripted_showcase else f"pursuer (sample/{max(plot_sample_rate, 1)})") if segment_index == 0 else None,
-            alpha=0.45,
+            alpha=0.28 if is_advantage_showcase else 0.45,
             view=view,
+            zorder=1 if is_advantage_showcase else None,
         )
 
     if is_scripted_showcase:
@@ -563,6 +572,7 @@ def save_plot(
                 linewidth=2.8,
                 label=label if label not in seen_strategy_labels else None,
                 view=view,
+                zorder=4 if is_advantage_showcase else None,
             )
             seen_strategy_labels.add(label)
 

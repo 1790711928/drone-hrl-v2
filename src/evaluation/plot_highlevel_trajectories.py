@@ -10,7 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from src.training.highlevel_env import CONTINUOUS_SCENARIO_SETS, CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, HighLevelOptionEnv
+from src.training.highlevel_env import (
+    ADVANTAGE_SHOWCASE_SCENARIO,
+    CONTINUOUS_SCENARIO_SETS,
+    CONTINUOUS_SHOWCASE_SCENARIO,
+    SCRIPTED_SHOWCASE_SCENARIO,
+    HighLevelOptionEnv,
+)
 
 
 OPTION_NAMES = ("pi1", "pi2", "pi3", "pi4")
@@ -22,6 +28,7 @@ STRATEGY_LABELS = {
 }
 OPTION_TO_STRATEGY = {name: STRATEGY_LABELS[index] for index, name in enumerate(OPTION_NAMES)}
 SCRIPTED_SHOWCASE_SCRIPT_NAME = "rear60-flank60-vertical60-boundary60-rear80-flank80-vertical100"
+ADVANTAGE_SHOWCASE_SCRIPT_NAME = "advantage_pi1_120_pi2_180"
 LOW_MODEL_FILENAMES = (
     "sac_low_1_rear_close_threat.zip",
     "sac_low_2_flank_threat.zip",
@@ -42,6 +49,9 @@ SUMMARY_FIELDS = (
     "showcase_seed",
     "completed_phases",
     "lowlevel_steps",
+    "initial_distance",
+    "minimum_distance",
+    "final_distance",
 )
 
 
@@ -262,6 +272,15 @@ class EpisodePlotData:
     def summary_row(self) -> dict[str, Any]:
         option_sequence = "->".join(OPTION_NAMES[index] for index in self.option_sequence)
         actual_regime_sequence = "->".join(compressed_name_sequence([name for _, name in self.regime_starts]))
+        distances = [
+            math.sqrt(
+                sum(
+                    (self.evader_points[index][axis] - self.pursuer_points[index][axis]) ** 2
+                    for axis in range(3)
+                )
+            )
+            for index in range(min(len(self.evader_points), len(self.pursuer_points)))
+        ]
         return {
             "scenario": self.scenario,
             "mode": self.mode,
@@ -272,10 +291,19 @@ class EpisodePlotData:
             "unique_option_count": len(set(self.option_sequence)),
             "option_sequence": option_sequence,
             "actual_regime_sequence": actual_regime_sequence,
-            "showcase_script": SCRIPTED_SHOWCASE_SCRIPT_NAME if self.scenario == SCRIPTED_SHOWCASE_SCENARIO or self.mode == "scripted_showcase" else "",
+            "showcase_script": (
+                ADVANTAGE_SHOWCASE_SCRIPT_NAME
+                if self.scenario == ADVANTAGE_SHOWCASE_SCENARIO or self.mode == "advantage_showcase"
+                else SCRIPTED_SHOWCASE_SCRIPT_NAME
+                if self.scenario == SCRIPTED_SHOWCASE_SCENARIO or self.mode == "scripted_showcase"
+                else ""
+            ),
             "showcase_seed": self.showcase_seed,
             "completed_phases": self.completed_phases,
             "lowlevel_steps": self.lowlevel_steps,
+            "initial_distance": distances[0] if distances else 0.0,
+            "minimum_distance": min(distances) if distances else 0.0,
+            "final_distance": distances[-1] if distances else 0.0,
         }
 
 
@@ -293,7 +321,7 @@ def rollout_episode(
     reset_options = {"scenario_set": scenario_set}
     if scenario_name:
         reset_options["scenario_name"] = scenario_name
-    reset_seed = episode_id if scenario_set == SCRIPTED_SHOWCASE_SCENARIO else None
+    reset_seed = episode_id if scenario_set in {SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO} else None
     obs, info = env.reset(seed=reset_seed, options=reset_options)
     scenario = str(info.get("scenario_name", "unknown"))
     recorder.reset(str(info.get("phase_name", "start")))
@@ -308,7 +336,7 @@ def rollout_episode(
             option = fixed_policy
         elif mode == "random":
             option = random.randint(0, 3)
-        elif mode in {"regime_oracle", "scripted_showcase"}:
+        elif mode in {"regime_oracle", "scripted_showcase", "advantage_showcase"}:
             option = {"rear": 0, "flank": 1, "boundary": 2, "vertical": 3}.get(str(info.get("regime_name", "rear")), 2)
         elif mode == "continuous_heuristic":
             regime = str(info.get("regime_name", "rear"))
@@ -472,7 +500,10 @@ def save_plot(
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection=None if view == "topdown" else "3d")
     is_continuous = episode.scenario in CONTINUOUS_SCENARIO_SETS
-    is_scripted_showcase = episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase"
+    is_scripted_showcase = (
+        episode.scenario in {SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO}
+        or episode.mode in {"scripted_showcase", "advantage_showcase"}
+    )
     suppress_text_annotations = no_text_annotations or (is_scripted_showcase and not show_callouts)
     draw_strategy_switch_markers = show_strategy_switch_markers or not is_scripted_showcase
     draw_regime_switch_markers = show_regime_switch_markers or not is_scripted_showcase
@@ -585,7 +616,7 @@ def save_plot(
         for marker_index, option_name in episode.option_switches:
             point = episode.evader_points[marker_index]
             color, marker = option_styles.get(option_name, ("tab:orange", "o"))
-            if episode.scenario == SCRIPTED_SHOWCASE_SCENARIO or episode.mode == "scripted_showcase":
+            if episode.scenario in {SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO} or episode.mode in {"scripted_showcase", "advantage_showcase"}:
                 label = OPTION_TO_STRATEGY.get(option_name, option_name) if option_name not in seen_option_names else None
             else:
                 label = f"option switch {option_name}" if option_name not in seen_option_names else None
@@ -648,7 +679,8 @@ def save_plot(
     else:
         option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
     if is_scripted_showcase:
-        first_line = f"Scripted showcase rollout | outcome={episode.outcome} | lowlevel_steps={episode.lowlevel_steps}"
+        showcase_title = "Advantage showcase rollout" if episode.scenario == ADVANTAGE_SHOWCASE_SCENARIO else "Scripted showcase rollout"
+        first_line = f"{showcase_title} | outcome={episode.outcome} | lowlevel_steps={episode.lowlevel_steps}"
         second_line = f"switch_count={episode.switch_count} | unique_strategies={len(set(episode.option_sequence))}"
     elif is_continuous:
         first_line = f"{episode.scenario} | mode={episode.mode} | outcome={episode.outcome} | lowlevel_steps={episode.lowlevel_steps}"
@@ -671,8 +703,8 @@ def save_plot(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot high-level option trajectories for presentation")
-    parser.add_argument("--mode", choices=["highlevel", "fixed", "random", "continuous_heuristic", "regime_oracle", "scripted_showcase"], default="highlevel")
-    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase"], default="sequential")
+    parser.add_argument("--mode", choices=["highlevel", "fixed", "random", "continuous_heuristic", "regime_oracle", "scripted_showcase", "advantage_showcase"], default="highlevel")
+    parser.add_argument("--scenario-set", choices=["basic", "mixed", "composite", "sequential", "continuous_pursuit", "continuous_showcase", "scripted_showcase", "advantage_showcase"], default="sequential")
     parser.add_argument("--scenario-name", default=None)
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--fixed-policy", type=int, choices=range(4), default=2)
@@ -715,7 +747,7 @@ def main() -> None:
     parser.add_argument("--min-unique-options", type=int, default=1)
     parser.add_argument("--max-rollout-attempts", type=int, default=0)
     args = parser.parse_args()
-    if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
+    if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
 
     if args.episodes <= 0:
@@ -732,10 +764,12 @@ def main() -> None:
         parser.error("--pursuit-link-interval must be positive")
     if args.showcase_mode == "continuous":
         print("showcase-mode=continuous only changes plot labeling; benchmark dynamics are selected by --scenario-set.")
-    if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
+    if args.mode in {"continuous_heuristic", "regime_oracle", "scripted_showcase", "advantage_showcase"} and args.scenario_set not in CONTINUOUS_SCENARIO_SETS:
         parser.error(f"--mode {args.mode} requires a continuous scenario set")
     if args.mode == "scripted_showcase" and args.scenario_set != SCRIPTED_SHOWCASE_SCENARIO:
         parser.error("--mode scripted_showcase requires --scenario-set scripted_showcase")
+    if args.mode == "advantage_showcase" and args.scenario_set != ADVANTAGE_SHOWCASE_SCENARIO:
+        parser.error("--mode advantage_showcase requires --scenario-set advantage_showcase")
     if importlib.util.find_spec("matplotlib") is None:
         print("matplotlib is not installed. Please install matplotlib to save high-level trajectory plots.")
         return

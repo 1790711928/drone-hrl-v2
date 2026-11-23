@@ -747,8 +747,10 @@ def main() -> None:
     parser.add_argument("--min-unique-options", type=int, default=1)
     parser.add_argument("--max-rollout-attempts", type=int, default=0)
     args = parser.parse_args()
-    if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
+    if args.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, SCRIPTED_SHOWCASE_SCENARIO} and args.episode_lowlevel_steps == 400:
         args.episode_lowlevel_steps = 500
+    elif args.scenario_set == ADVANTAGE_SHOWCASE_SCENARIO and args.episode_lowlevel_steps == 400:
+        args.episode_lowlevel_steps = 300
 
     if args.episodes <= 0:
         parser.error("--episodes must be positive")

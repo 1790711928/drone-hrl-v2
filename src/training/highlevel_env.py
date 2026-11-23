@@ -489,8 +489,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
 
     def _continuous_scheduled_regime(self) -> str:
         if self.scenario_set == ADVANTAGE_SHOWCASE_SCENARIO:
-            # The advantage showcase is a one-pass two-stage rollout:
-            # pi4/vertical first, then pi1/rear until the episode ends.
+            # The advantage showcase is a one-pass three-stage rollout:
+            # pi4/vertical, then pi2/flank, then pi1/rear until the episode ends.
             # Do not wrap back to the first stage after the scripted duration.
             step_in_schedule = min(
                 self.continuous_lowlevel_steps,

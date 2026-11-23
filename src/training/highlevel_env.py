@@ -158,6 +158,7 @@ def inject_sequential_phase(evader: Agent3DState, phase_name: str) -> Env3DState
 CONTINUOUS_PURSUIT_SCENARIO = "continuous_pursuit"
 CONTINUOUS_SHOWCASE_SCENARIO = "continuous_showcase"
 SCRIPTED_SHOWCASE_SCENARIO = "scripted_showcase"
+ADVANTAGE_SHOWCASE_SCENARIO = "advantage_showcase"
 STRUCTURED_RANDOM_COMPOSITE_SCENARIO = "structured_random_composite"
 STRUCTURED_DEFAULT_EPISODE_LOWLEVEL_STEPS = 240
 STRUCTURED_DEFAULT_BOUND_SCALE = 2.5
@@ -168,11 +169,14 @@ CONTINUOUS_SCENARIO_SETS = {
     CONTINUOUS_PURSUIT_SCENARIO,
     CONTINUOUS_SHOWCASE_SCENARIO,
     SCRIPTED_SHOWCASE_SCENARIO,
+    ADVANTAGE_SHOWCASE_SCENARIO,
     STRUCTURED_RANDOM_COMPOSITE_SCENARIO,
 }
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
 SCRIPTED_SHOWCASE_SCHEDULE = ("rear", "flank", "vertical", "boundary", "rear", "flank")
 SCRIPTED_SHOWCASE_DURATIONS = (60, 60, 60, 60, 80, 80, 100)
+ADVANTAGE_SHOWCASE_SCHEDULE = ("rear", "flank")
+ADVANTAGE_SHOWCASE_DURATIONS = (120, 180)
 STRUCTURED_COMPOSITE_SCHEDULES = (
     ("rear", "flank", "boundary"),
     ("flank", "vertical", "boundary"),
@@ -195,6 +199,11 @@ SHOWCASE_START_STATE = Env3DState(
 SCRIPTED_SHOWCASE_START_STATE = Env3DState(
     evader=Agent3DState(x=0.0, y=0.0, z=150.0, speed=9.3, yaw=0.80, pitch=0.0),
     pursuer=Agent3DState(x=-30.0, y=-18.0, z=142.0, speed=10.5, yaw=0.80, pitch=0.02),
+    step_count=0,
+)
+ADVANTAGE_SHOWCASE_START_STATE = Env3DState(
+    evader=Agent3DState(x=0.0, y=0.0, z=38.0, speed=9.3, yaw=0.80, pitch=0.0),
+    pursuer=Agent3DState(x=-48.0, y=-36.0, z=33.0, speed=10.5, yaw=0.80, pitch=0.02),
     step_count=0,
 )
 
@@ -363,7 +372,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
 
     def _use_showcase_bounds(self) -> None:
         base = self._base_term_cfg
-        if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
+        if self.scenario_set in {SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO}:
             xy_scale = max(self.showcase_bound_scale, 6.0)
             z_scale = xy_scale
         else:
@@ -477,6 +486,14 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         }
 
     def _continuous_scheduled_regime(self) -> str:
+        if self.scenario_set == ADVANTAGE_SHOWCASE_SCENARIO:
+            step_in_cycle = self.continuous_lowlevel_steps % sum(ADVANTAGE_SHOWCASE_DURATIONS)
+            cursor = 0
+            for regime, duration in zip(ADVANTAGE_SHOWCASE_SCHEDULE, ADVANTAGE_SHOWCASE_DURATIONS):
+                cursor += duration
+                if step_in_cycle < cursor:
+                    return regime
+            return ADVANTAGE_SHOWCASE_SCHEDULE[-1]
         if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
             step_in_cycle = self.continuous_lowlevel_steps % sum(SCRIPTED_SHOWCASE_DURATIONS)
             cursor = 0
@@ -540,7 +557,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         scheduled = self._continuous_scheduled_regime()
         scores = self._continuous_threat_scores(obs, closing_speed)
         min_margin = float(obs["min_boundary_margin"])
-        if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
+        if self.scenario_set in {SCRIPTED_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO}:
             boundary_enter = self.boundary_priority_enter
             boundary_exit = self.boundary_priority_exit
             boundary_priority = min_margin <= boundary_enter
@@ -831,6 +848,11 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         elif requested_scenario == SCRIPTED_SHOWCASE_SCENARIO:
             self._use_showcase_bounds()
             start_state = self._scripted_showcase_start_state()
+        elif requested_scenario == ADVANTAGE_SHOWCASE_SCENARIO:
+            self._use_showcase_bounds()
+            start_state = ADVANTAGE_SHOWCASE_START_STATE
+            self._use_showcase_bounds()
+            start_state = self._scripted_showcase_start_state()
         elif requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
             # The branch above has already prepared a randomized start state.
             pass
@@ -996,7 +1018,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         return obs, float(reward), terminated, False, info
 
     def _continuous_success(self) -> bool:
-        if self.scenario_set == CONTINUOUS_SHOWCASE_SCENARIO:
+        if self.scenario_set in {CONTINUOUS_SHOWCASE_SCENARIO, ADVANTAGE_SHOWCASE_SCENARIO}:
             return True
         recent_distance, recent_closing = self._continuous_recent_metrics()
         return recent_distance >= 26.0 and recent_closing <= 0.05

@@ -175,8 +175,8 @@ CONTINUOUS_SCENARIO_SETS = {
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
 SCRIPTED_SHOWCASE_SCHEDULE = ("rear", "flank", "vertical", "boundary", "rear", "flank")
 SCRIPTED_SHOWCASE_DURATIONS = (60, 60, 60, 60, 80, 80, 100)
-ADVANTAGE_SHOWCASE_SCHEDULE = ("rear", "flank")
-ADVANTAGE_SHOWCASE_DURATIONS = (120, 180)
+ADVANTAGE_SHOWCASE_SCHEDULE = ("vertical", "rear")
+ADVANTAGE_SHOWCASE_DURATIONS = (110, 170)
 STRUCTURED_COMPOSITE_SCHEDULES = (
     ("rear", "flank", "boundary"),
     ("flank", "vertical", "boundary"),
@@ -202,8 +202,10 @@ SCRIPTED_SHOWCASE_START_STATE = Env3DState(
     step_count=0,
 )
 ADVANTAGE_SHOWCASE_START_STATE = Env3DState(
+    # Approximately 150 m initial separation: pursuer is behind, laterally offset,
+    # and below the evader so the showcase begins with a clearly advantageous escape geometry.
     evader=Agent3DState(x=0.0, y=0.0, z=38.0, speed=9.3, yaw=0.80, pitch=0.0),
-    pursuer=Agent3DState(x=-48.0, y=-36.0, z=33.0, speed=10.5, yaw=0.80, pitch=0.02),
+    pursuer=Agent3DState(x=-86.7, y=-117.9, z=3.0, speed=10.5, yaw=0.80, pitch=0.02),
     step_count=0,
 )
 

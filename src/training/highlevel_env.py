@@ -175,8 +175,8 @@ CONTINUOUS_SCENARIO_SETS = {
 DEFAULT_REGIME_SCHEDULE = ("rear", "vertical", "boundary", "flank", "rear", "boundary")
 SCRIPTED_SHOWCASE_SCHEDULE = ("rear", "flank", "vertical", "boundary", "rear", "flank")
 SCRIPTED_SHOWCASE_DURATIONS = (60, 60, 60, 60, 80, 80, 100)
-ADVANTAGE_SHOWCASE_SCHEDULE = ("vertical", "flank")
-ADVANTAGE_SHOWCASE_DURATIONS = (120, 180)
+ADVANTAGE_SHOWCASE_SCHEDULE = ("vertical", "flank", "rear")
+ADVANTAGE_SHOWCASE_DURATIONS = (80, 100, 120)
 STRUCTURED_COMPOSITE_SCHEDULES = (
     ("rear", "flank", "boundary"),
     ("flank", "vertical", "boundary"),

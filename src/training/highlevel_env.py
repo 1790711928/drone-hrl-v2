@@ -242,6 +242,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         boundary_priority_exit: float = 0.32,
         showcase_bound_scale: float = 2.5,
         showcase_z_bound_scale: float = 1.5,
+        advantage_strategy_schedule: str | tuple[str, ...] | None = None,
+        advantage_strategy_durations: str | tuple[int, ...] | None = None,
         structured_position_jitter: float = 2.0,
         structured_relative_jitter: float = 1.5,
         structured_yaw_jitter: float = 0.18,
@@ -271,6 +273,33 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.boundary_priority_exit = boundary_priority_exit
         self.showcase_bound_scale = showcase_bound_scale
         self.showcase_z_bound_scale = showcase_z_bound_scale
+        if advantage_strategy_schedule is None:
+            self.advantage_showcase_schedule = ADVANTAGE_SHOWCASE_SCHEDULE
+        elif isinstance(advantage_strategy_schedule, str):
+            self.advantage_showcase_schedule = tuple(
+                item.strip() for item in advantage_strategy_schedule.split(",") if item.strip()
+            )
+        else:
+            self.advantage_showcase_schedule = tuple(advantage_strategy_schedule)
+        if advantage_strategy_durations is None:
+            self.advantage_showcase_durations = ADVANTAGE_SHOWCASE_DURATIONS
+        elif isinstance(advantage_strategy_durations, str):
+            self.advantage_showcase_durations = tuple(
+                int(item.strip()) for item in advantage_strategy_durations.split(",") if item.strip()
+            )
+        else:
+            self.advantage_showcase_durations = tuple(int(item) for item in advantage_strategy_durations)
+        if len(self.advantage_showcase_schedule) != len(self.advantage_showcase_durations):
+            raise ValueError("advantage strategy schedule and durations must have the same length")
+        if not self.advantage_showcase_schedule or any(
+            regime not in {"rear", "flank", "boundary", "vertical"}
+            for regime in self.advantage_showcase_schedule
+        ):
+            raise ValueError("advantage strategy schedule contains an invalid regime")
+        if any(duration <= 0 for duration in self.advantage_showcase_durations):
+            raise ValueError("advantage strategy durations must be positive")
+        if self.scenario_set == ADVANTAGE_SHOWCASE_SCENARIO and sum(self.advantage_showcase_durations) != self.episode_lowlevel_steps:
+            raise ValueError("advantage strategy durations must sum to episode_lowlevel_steps")
         self.structured_position_jitter = max(float(structured_position_jitter), 0.0)
         self.structured_relative_jitter = max(float(structured_relative_jitter), 0.0)
         self.structured_yaw_jitter = max(float(structured_yaw_jitter), 0.0)
@@ -494,14 +523,14 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             # Do not wrap back to the first stage after the scripted duration.
             step_in_schedule = min(
                 self.continuous_lowlevel_steps,
-                sum(ADVANTAGE_SHOWCASE_DURATIONS) - 1,
+                sum(self.advantage_showcase_durations) - 1,
             )
             cursor = 0
-            for regime, duration in zip(ADVANTAGE_SHOWCASE_SCHEDULE, ADVANTAGE_SHOWCASE_DURATIONS):
+            for regime, duration in zip(self.advantage_showcase_schedule, self.advantage_showcase_durations):
                 cursor += duration
                 if step_in_schedule < cursor:
                     return regime
-            return ADVANTAGE_SHOWCASE_SCHEDULE[-1]
+            return self.advantage_showcase_schedule[-1]
         if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO:
             step_in_cycle = self.continuous_lowlevel_steps % sum(SCRIPTED_SHOWCASE_DURATIONS)
             cursor = 0

@@ -851,8 +851,6 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         elif requested_scenario == ADVANTAGE_SHOWCASE_SCENARIO:
             self._use_showcase_bounds()
             start_state = ADVANTAGE_SHOWCASE_START_STATE
-            self._use_showcase_bounds()
-            start_state = self._scripted_showcase_start_state()
         elif requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
             # The branch above has already prepared a randomized start state.
             pass

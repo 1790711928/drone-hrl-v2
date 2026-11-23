@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import importlib.util
+import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,7 +29,7 @@ STRATEGY_LABELS = {
 }
 OPTION_TO_STRATEGY = {name: STRATEGY_LABELS[index] for index, name in enumerate(OPTION_NAMES)}
 SCRIPTED_SHOWCASE_SCRIPT_NAME = "rear60-flank60-vertical60-boundary60-rear80-flank80-vertical100"
-ADVANTAGE_SHOWCASE_SCRIPT_NAME = "advantage_pi1_120_pi2_180"
+ADVANTAGE_SHOWCASE_SCRIPT_NAME = "advantage_pi4_110_pi1_170"
 LOW_MODEL_FILENAMES = (
     "sac_low_1_rear_close_threat.zip",
     "sac_low_2_flank_threat.zip",

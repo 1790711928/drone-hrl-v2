@@ -669,7 +669,11 @@ def save_plot(
                 zorder=7,
             )
 
-    bounds = auto_plot_bounds(episode.evader_points, episode.pursuer_points)
+    bounds = auto_plot_bounds(
+        episode.evader_points,
+        episode.pursuer_points,
+        padding_ratio=0.15 if is_advantage_showcase else 0.10,
+    )
     if view != "topdown":
         bounds = equalize_3d_bounds(bounds)
     x_min, x_max, y_min, y_max, z_min, z_max = bounds

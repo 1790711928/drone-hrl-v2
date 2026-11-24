@@ -244,6 +244,8 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         showcase_z_bound_scale: float = 1.5,
         advantage_strategy_schedule: str | tuple[str, ...] | None = None,
         advantage_strategy_durations: str | tuple[int, ...] | None = None,
+        advantage_initial_distance: float | None = None,
+        advantage_target_smoothing: float = 0.0,
         structured_position_jitter: float = 2.0,
         structured_relative_jitter: float = 1.5,
         structured_yaw_jitter: float = 0.18,
@@ -300,6 +302,12 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             raise ValueError("advantage strategy durations must be positive")
         if self.scenario_set == ADVANTAGE_SHOWCASE_SCENARIO and sum(self.advantage_showcase_durations) != self.episode_lowlevel_steps:
             raise ValueError("advantage strategy durations must sum to episode_lowlevel_steps")
+        if advantage_initial_distance is not None and float(advantage_initial_distance) <= 0.0:
+            raise ValueError("advantage_initial_distance must be positive")
+        if not 0.0 <= float(advantage_target_smoothing) < 1.0:
+            raise ValueError("advantage_target_smoothing must be in [0, 1)")
+        self.advantage_initial_distance = None if advantage_initial_distance is None else float(advantage_initial_distance)
+        self.advantage_target_smoothing = float(advantage_target_smoothing)
         self.structured_position_jitter = max(float(structured_position_jitter), 0.0)
         self.structured_relative_jitter = max(float(structured_relative_jitter), 0.0)
         self.structured_yaw_jitter = max(float(structured_yaw_jitter), 0.0)
@@ -365,6 +373,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info: dict[str, Any] = {}
+        self.previous_advantage_target: Agent3DState | None = None
         self.current_showcase_seed: int | None = None
         self.structured_phase_index = 0
         self.structured_completed_phases = 0
@@ -755,6 +764,23 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             pitch=evader.pitch,
         )
 
+    def _advantage_showcase_start_state(self) -> Env3DState:
+        if self.advantage_initial_distance is None:
+            return ADVANTAGE_SHOWCASE_START_STATE
+        state = ADVANTAGE_SHOWCASE_START_STATE
+        dx = state.pursuer.x - state.evader.x
+        dy = state.pursuer.y - state.evader.y
+        dz = state.pursuer.z - state.evader.z
+        current_distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        scale = self.advantage_initial_distance / max(current_distance, 1e-6)
+        pursuer = replace(
+            state.pursuer,
+            x=state.evader.x + dx * scale,
+            y=state.evader.y + dy * scale,
+            z=state.evader.z + dz * scale,
+        )
+        return Env3DState(evader=state.evader, pursuer=pursuer, step_count=state.step_count)
+
     def _scripted_showcase_start_state(self) -> Env3DState:
         ev = SCRIPTED_SHOWCASE_START_STATE.evader
         pu = SCRIPTED_SHOWCASE_START_STATE.pursuer
@@ -852,6 +878,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
         self.continuous_boundary_priority_active = False
         self.continuous_state_driven_steps = 0
         self.continuous_last_regime_info = {}
+        self.previous_advantage_target = None
         self.structured_phase_index = 0
         self.structured_completed_phases = 0
         if requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
@@ -887,7 +914,7 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             start_state = self._scripted_showcase_start_state()
         elif requested_scenario == ADVANTAGE_SHOWCASE_SCENARIO:
             self._use_showcase_bounds()
-            start_state = ADVANTAGE_SHOWCASE_START_STATE
+            start_state = self._advantage_showcase_start_state()
         elif requested_scenario == STRUCTURED_RANDOM_COMPOSITE_SCENARIO:
             # The branch above has already prepared a randomized start state.
             pass
@@ -966,6 +993,17 @@ class HighLevelOptionEnv(gym.Env[np.ndarray, int]):
             env.env_cfg.pitch_rate_max,
         )
         target = self._continuous_pursuer_target(evader_next, regime)
+        if self.scenario_set == ADVANTAGE_SHOWCASE_SCENARIO and self.advantage_target_smoothing > 0.0:
+            previous = self.previous_advantage_target
+            if previous is not None:
+                smoothing = self.advantage_target_smoothing
+                target = replace(
+                    target,
+                    x=smoothing * previous.x + (1.0 - smoothing) * target.x,
+                    y=smoothing * previous.y + (1.0 - smoothing) * target.y,
+                    z=smoothing * previous.z + (1.0 - smoothing) * target.z,
+                )
+            self.previous_advantage_target = target
         pursuer_speed_ratio = 1.45 if self.scenario_set == SCRIPTED_SHOWCASE_SCENARIO else self.continuous_pursuer_speed_ratio
         pu_accel, pu_yaw_rate, pu_pitch_rate = rule_based_pursuer_control(
             target,

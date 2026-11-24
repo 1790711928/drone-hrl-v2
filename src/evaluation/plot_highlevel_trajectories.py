@@ -764,6 +764,8 @@ def main() -> None:
     parser.add_argument("--episode-lowlevel-steps", type=int, default=400)
     parser.add_argument("--strategy-sequence", default=None, help="advantage_showcase strategy IDs, e.g. 4,3,1")
     parser.add_argument("--strategy-steps", default=None, help="advantage_showcase low-level durations, e.g. 80,100,120")
+    parser.add_argument("--advantage-initial-distance", type=float, default=None)
+    parser.add_argument("--advantage-target-smoothing", type=float, default=0.0)
     parser.add_argument("--regime-duration", type=int, default=60)
     parser.add_argument("--pursuer-speed-ratio", type=float, default=1.20)
     parser.add_argument("--regime-schedule", default="rear,vertical,boundary,flank,rear,boundary")
@@ -802,6 +804,10 @@ def main() -> None:
         parser.error(str(exc))
     if (args.strategy_sequence is not None or args.strategy_steps is not None) and args.scenario_set != ADVANTAGE_SHOWCASE_SCENARIO:
         parser.error("--strategy-sequence/--strategy-steps are only supported for advantage_showcase")
+    if args.advantage_initial_distance is not None and args.advantage_initial_distance <= 0.0:
+        parser.error("--advantage-initial-distance must be positive")
+    if not 0.0 <= args.advantage_target_smoothing < 1.0:
+        parser.error("--advantage-target-smoothing must be in [0, 1)")
 
     if args.episodes <= 0:
         parser.error("--episodes must be positive")
@@ -861,6 +867,8 @@ def main() -> None:
         showcase_z_bound_scale=args.showcase_z_bound_scale,
         advantage_strategy_schedule=advantage_strategy_schedule,
         advantage_strategy_durations=advantage_strategy_durations,
+        advantage_initial_distance=args.advantage_initial_distance,
+        advantage_target_smoothing=args.advantage_target_smoothing,
     )
     recorder = TrajectoryRecorder(env)
     recorder.attach()

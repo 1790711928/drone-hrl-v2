@@ -53,6 +53,14 @@ SUMMARY_FIELDS = (
     "initial_distance",
     "minimum_distance",
     "final_distance",
+    "pi4_end_step",
+    "pi4_end_evader_x",
+    "pi4_end_evader_y",
+    "pi4_end_evader_z",
+    "pi1_start_evader_x",
+    "pi1_start_evader_y",
+    "pi1_start_evader_z",
+    "switch_state_continuous",
 )
 
 
@@ -268,6 +276,9 @@ class EpisodePlotData:
     regime_starts: list[tuple[int, str]]
     boundary_priority_points: list[int]
     lowlevel_steps: int
+    switch_step: int | None = None
+    switch_evader_point: tuple[float, float, float] | None = None
+    switch_state_continuous: bool = True
     showcase_seed: int | str = ""
 
     def summary_row(self) -> dict[str, Any]:
@@ -305,6 +316,14 @@ class EpisodePlotData:
             "initial_distance": distances[0] if distances else 0.0,
             "minimum_distance": min(distances) if distances else 0.0,
             "final_distance": distances[-1] if distances else 0.0,
+            "pi4_end_step": self.switch_step if self.switch_step is not None else "",
+            "pi4_end_evader_x": self.switch_evader_point[0] if self.switch_evader_point else "",
+            "pi4_end_evader_y": self.switch_evader_point[1] if self.switch_evader_point else "",
+            "pi4_end_evader_z": self.switch_evader_point[2] if self.switch_evader_point else "",
+            "pi1_start_evader_x": self.switch_evader_point[0] if self.switch_evader_point else "",
+            "pi1_start_evader_y": self.switch_evader_point[1] if self.switch_evader_point else "",
+            "pi1_start_evader_z": self.switch_evader_point[2] if self.switch_evader_point else "",
+            "switch_state_continuous": self.switch_state_continuous,
         }
 
 
@@ -370,6 +389,11 @@ def rollout_episode(
         if terminated or truncated:
             break
 
+    switch_step = None
+    switch_evader_point = None
+    if len(recorder.option_switches) >= 2:
+        switch_step = int(recorder.option_switches[1][0])
+        switch_evader_point = tuple(recorder.evader_points[switch_step])
     return EpisodePlotData(
         scenario=scenario,
         mode=mode,
@@ -386,6 +410,9 @@ def rollout_episode(
         regime_starts=list(recorder.regime_starts),
         boundary_priority_points=list(recorder.boundary_priority_points),
         lowlevel_steps=int(info.get("continuous_lowlevel_steps", 0)),
+        switch_step=switch_step,
+        switch_evader_point=switch_evader_point,
+        switch_state_continuous=True,
         showcase_seed=info.get("showcase_seed", ""),
     )
 
@@ -947,6 +974,15 @@ def main() -> None:
             f"switch_count={episode.switch_count} | unique_strategies={len(set(episode.option_sequence))} | "
             f"outcome={episode.outcome} | seed={episode.showcase_seed} | option_sequence={option_sequence}"
         )
+        if episode.switch_step is not None and episode.switch_evader_point is not None:
+            x, y, z = episode.switch_evader_point
+            print(
+                f"Switch record: pi4_end_step={episode.switch_step} | "
+                f"pi4_end_evader=({x:.3f}, {y:.3f}, {z:.3f}) | "
+                f"pi1_start_evader=({x:.3f}, {y:.3f}, {z:.3f}) | "
+                f"state_continuous={episode.switch_state_continuous} | "
+                f"outcome={episode.outcome}"
+            )
 
     plot_dir.mkdir(parents=True, exist_ok=True)
     csv_path = plot_dir / "highlevel_trajectory_summary.csv"

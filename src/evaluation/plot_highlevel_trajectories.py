@@ -117,9 +117,18 @@ def boundary_priority_starts(points: list[int]) -> list[int]:
     return starts
 
 
-def option_trajectory_segments(option_switches: list[tuple[int, str]], point_count: int) -> list[tuple[int, int, str]]:
+def option_trajectory_segments(
+    option_switches: list[tuple[int, str]],
+    point_count: int,
+    display_switch_index: int | None = None,
+) -> list[tuple[int, int, str]]:
     if point_count <= 0:
         return []
+    if display_switch_index is not None and len(option_switches) >= 2:
+        first_option = option_switches[0][1]
+        second_option = option_switches[1][1]
+        switch = max(1, min(point_count - 1, int(display_switch_index)))
+        return [(0, switch, first_option), (switch, point_count - 1, second_option)]
     starts = sorted((max(0, min(point_count - 1, index)), option_name) for index, option_name in option_switches)
     if not starts or starts[0][0] != 0:
         starts.insert(0, (0, "pi1"))
@@ -526,6 +535,7 @@ def save_plot(
     show_pursuit_links: bool = False,
     pursuit_link_interval: int = 60,
     view: str = "3d",
+    display_switch_index: int | None = None,
 ) -> Path:
     import matplotlib.pyplot as plt
 
@@ -586,7 +596,11 @@ def save_plot(
             "pi3": ("tab:brown", "Boundary strategy"),
             "pi4": ("tab:pink", "Vertical strategy"),
         }
-        for start, end, option_name in option_trajectory_segments(episode.option_switches, len(episode.evader_points)):
+        for start, end, option_name in option_trajectory_segments(
+            episode.option_switches,
+            len(episode.evader_points),
+            display_switch_index=display_switch_index if is_advantage_showcase else None,
+        ):
             color, label = option_styles_for_lines.get(option_name, ("tab:blue", option_name))
             segment_points = episode.evader_points[start : end + 1]
             if len(segment_points) < 2:
@@ -814,6 +828,7 @@ def main() -> None:
     parser.add_argument("--show-boundary-priority-markers", action="store_true")
     parser.add_argument("--show-pursuit-links", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--pursuit-link-interval", type=int, default=60)
+    parser.add_argument("--display-switch-index", type=int, default=None, help="visual-only color split index for advantage_showcase")
     parser.add_argument("--view", choices=["3d", "topdown"], default="3d")
     parser.add_argument("--min-switch-count", type=int, default=0)
     parser.add_argument("--min-lowlevel-steps", type=int, default=0)
@@ -967,6 +982,7 @@ def main() -> None:
             show_pursuit_links=args.show_pursuit_links,
             pursuit_link_interval=args.pursuit_link_interval,
             view=args.view,
+            display_switch_index=args.display_switch_index,
         )
         option_sequence = "->".join(OPTION_NAMES[index] for index in episode.option_sequence)
         print(
